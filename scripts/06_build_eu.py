@@ -10,7 +10,7 @@ STEP 6: EvidenceUnit 실제 구성.
   - table_abstract  : 표 요약 문자열 (multi-granularity 검색)
   - footnote_text   : footnotes RefItem 역참조
   - bbox            : normalize_bbox() 0~1 변환
-  - caption_confidence: high(RefItem 직접 연결) / low(없음)
+  - caption_confidence: direct / none
 
 Usage:
     python scripts/06_build_eu.py [path/to/file.pdf]
@@ -187,7 +187,7 @@ def build_evidence_units(doc) -> list:
 
         # ── 캡션 (confidence 판별 포함) ──────────────────────────────
         caption_text = None
-        caption_confidence = "low"
+        caption_confidence = "none"
         cap_refs = t_dict.get("captions", [])
         if cap_refs:
             cref = (cap_refs[0].get("cref", "")
@@ -195,7 +195,7 @@ def build_evidence_units(doc) -> list:
                     else getattr(cap_refs[0], "cref", ""))
             cap_dict = resolve_ref(doc, cref)
             caption_text = cap_dict.get("text") or None
-            caption_confidence = "high" if caption_text else "low"
+            caption_confidence = "direct" if caption_text else "none"
 
         # ── 각주 ────────────────────────────────────────────────────
         footnote_text = None
