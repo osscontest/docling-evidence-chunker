@@ -7,13 +7,13 @@ interfaces.py
     표          → EU로 변환
     텍스트/그림 → Docling HybridChunker
 
-26.07.01 기준
+26.07.06 기준
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Literal, Optional
 
 # LangChain 미설치 환경에서도 import 가능
 try:
@@ -91,11 +91,12 @@ class EvidenceUnit:
 
     # ------------------------------------------------------------------
     # 신뢰도 메타데이터
-    # "high": captions RefItem으로 직접 연결된 캡션
-    # "low" : bbox 거리로 추정했거나 캡션 없음
-    # 평가 시 low EU에서 오답 집중 여부 분석에 활용
+    # "direct"  : captions RefItem으로 직접 연결된 캡션
+    # "inferred": bbox 거리로 추정한 캡션
+    # "none"    : 캡션 없음
+    # 평가 시 confidence별 오답 분포 분석에 활용
     # ------------------------------------------------------------------
-    caption_confidence: str = "high"
+    caption_confidence: Literal["direct", "inferred", "none"] = "none"
 
     # ------------------------------------------------------------------
     # text property (자동 계산되므로 값을 넣지 말 것)
@@ -124,57 +125,3 @@ class EvidenceUnit:
             *self.context_after,
         ]
         return "\n".join(p for p in parts if p)
-
-    # ------------------------------------------------------------------
-    # LangChain 변환 (선택)
-    # ------------------------------------------------------------------
-    def to_langchain_document(self) -> "LangChainDocument":
-        if LangChainDocument is None:
-            raise ImportError("langchain_core is not installed. pip install langchain-core")
-        return LangChainDocument(
-            page_content=self.text,
-            metadata={
-                "eu_id": self.eu_id,
-                "page_no": self.page_no,
-                "section_header": self.section_header,
-                "caption_text": self.caption_text,
-                "bbox": list(self.bbox),
-                "is_split": self.is_split,
-                "split_index": self.split_index,
-                "total_splits": self.total_splits,
-                "caption_confidence": self.caption_confidence,
-            },
-        )
-
-
-# ---------------------------------------------------------------------------
-# bbox 변환 유틸
-# ---------------------------------------------------------------------------
-
-def normalize_bbox(
-    bbox: dict,
-    page_width: float,
-    page_height: float,
-) -> tuple[float, float, float, float]:
-    """
-    Docling PDF 포인트 bbox (BOTTOMLEFT origin) → 0~1 normalized (x1,y1,x2,y2).
-
-    Docling bbox 키: l(left), t(top), r(right), b(bottom), coord_origin=BOTTOMLEFT
-    BOTTOMLEFT에서 t > b (top이 y축 더 큼).
-
-    반환값은 BOTTOMLEFT 유지, 0~1로만 스케일 축소:
-        x1 = l / width
-        y1 = b / height   (시각적 하단, 작은 y)
-        x2 = r / width
-        y2 = t / height   (시각적 상단, 큰 y)
-    """
-    l = bbox.get("l", 0.0)
-    t = bbox.get("t", 0.0)
-    r = bbox.get("r", 0.0)
-    b = bbox.get("b", 0.0)
-    return (
-        l / page_width,
-        b / page_height,
-        r / page_width,
-        t / page_height,
-    )

@@ -9,6 +9,7 @@ Docling 기반 Evidence Unit 청킹 → RAG 성능 향상
 ```
 docling-evidence-chunker/
 ├── interfaces.py              # EvidenceUnit 데이터클래스 (팀 공유 인터페이스)
+├── langchain_wrapper.py       # LangChain / LlamaIndex 변환 래퍼 (팀원2)
 ├── download_test_pdfs.py      # 테스트 PDF 다운로드
 ├── download_models.py         # Docling 모델 로컬 다운로드 (Windows 심볼릭링크 우회)
 ├── run_all.py                 # 전체 탐색 파이프라인 실행기
@@ -29,7 +30,6 @@ docling-evidence-chunker/
 └── reports/                   # W1 탐색 보고서
 ```
 
-
 ---
 
 ## 원본 인터페이스에서 변경된 점
@@ -42,13 +42,12 @@ docling-evidence-chunker/
 |------|-----------|
 | `flattened_rows: list[str]` | 임베딩 모델이 표 구조보다 자연어 문장에 더 잘 반응 → Recall@1 향상 핵심 |
 | `table_abstract: Optional[str]` | 광범위 질의("이 표가 뭘 담고 있어?")에 대한 검색 커버리지 확보 |
-| `caption_confidence: str` | 캡션 연결 방식(직접/추정)을 기록해 오답 분석에 활용 |
+| `caption_confidence: Literal["direct", "inferred", "none"]` | 캡션 연결 방식을 기록해 오답 분석에 활용 |
 
-### 메서드 추가
+### 래퍼 분리
 
-| 메서드 | 내용 |
-|--------|------|
-| `to_langchain_document()` | LangChain `Document` 객체로 직접 변환. `metadata`에 eu_id, bbox, confidence 포함 |
+`to_langchain_document()` 메서드는 `langchain_wrapper.py`의 `eu_to_langchain(eu)`로 분리.
+`interfaces.py`는 순수 데이터 구조만 담음.
 
 ### `text` property 조립 순서 변경
 
@@ -67,15 +66,8 @@ section_header → context_before → caption_text → table_abstract → table_
 | 필드 | 원본 | 변경 |
 |------|------|------|
 | `table_html` | `table.export_to_html()` | `table.export_to_html(doc)` — **`doc` 인자 필수** (없으면 빈 문자열) |
-| `bbox` | "0~1 normalized (Docling 기본 좌표계)" | Docling 원본은 PDF 포인트(BOTTOMLEFT). `normalize_bbox()`로 변환 필요 |
-| `context_before/after` | "bbox + 임베딩 통과" | 현재 bbox 300pt 이내 단락 수집. 임베딩 필터는 추후 추가 예정 |
-
-### 유틸 함수 추가 (`interfaces.py`)
-
-```python
-normalize_bbox(bbox, page_width, page_height) -> tuple
-# Docling PDF 포인트(BOTTOMLEFT) → 0~1 normalized 변환
-```
+| `bbox` | "0~1 normalized (Docling 기본 좌표계)" | Docling 원본은 PDF 포인트(BOTTOMLEFT). 팀원1 모듈에서 정규화 후 저장 |
+| `context_before/after` | "bbox + 임베딩 통과" | 현재 bbox 300pt 이내 단락 수집. 임베딩 필터는 W3에 추가 예정 |
 
 ---
 
@@ -85,6 +77,7 @@ normalize_bbox(bbox, page_width, page_height) -> tuple
 
 ```python
 from interfaces import EvidenceUnit
+from langchain_wrapper import eu_to_langchain
 
 eu = EvidenceUnit(
     eu_id="eu-p6-0",          # "eu-p{페이지}-{인덱스}"
@@ -98,14 +91,14 @@ eu = EvidenceUnit(
     context_before=[],
     context_after=["The results show that..."],
     bbox=(0.12, 0.82, 0.88, 0.93),   # 0~1 normalized, BOTTOMLEFT
-    caption_confidence="high",        # "high" | "low"
+    caption_confidence="direct",      # "direct" | "inferred" | "none"
 )
 
 # 임베딩/LangChain에 넘길 텍스트
 print(eu.text)
 
 # LangChain Document로 변환
-doc = eu.to_langchain_document()
+doc = eu_to_langchain(eu)
 ```
 
 ### EvidenceUnit 필드 요약
@@ -123,8 +116,8 @@ doc = eu.to_langchain_document()
 | `flattened_rows` | `list[str]` | 셀별 자연어 문장 (임베딩 Recall@1 향상용) |
 | `table_abstract` | `Optional[str]` | 표 전체 요약 (광범위 질의용) |
 | `bbox` | `tuple[float,float,float,float]` | 표 위치 (x1,y1,x2,y2), 0~1 normalized |
-| `caption_confidence` | `str` | `"high"` / `"low"` (캡션 연결 신뢰도) |
-| `is_split` | `bool` | 행 분할 여부 (팀원 3 작업과 연동) |
+| `caption_confidence` | `Literal["direct", "inferred", "none"]` | 캡션 연결 신뢰도 |
+| `is_split` | `bool` | 행 분할 여부 |
 | `split_index` | `Optional[int]` | 분할 순서 (0-based) |
 | `total_splits` | `Optional[int]` | 총 분할 수 |
 | `text` *(property)* | `str` | 임베딩용 최종 텍스트 (자동 조립, 직접 넣지 말 것) |
@@ -190,11 +183,12 @@ build_table_abstract(caption_text, col_map, num_rows, section_header)
 ### 6. 캡션 신뢰도 메타데이터
 
 ```python
-caption_confidence = "high"  # captions RefItem으로 직접 연결
-caption_confidence = "low"   # 캡션 없거나 bbox 거리로 추정
+caption_confidence = "direct"    # captions RefItem으로 직접 연결
+caption_confidence = "inferred"  # bbox 거리로 추정한 캡션
+caption_confidence = "none"      # 캡션 없음
 ```
 
-RAG 정답률 분석 시 low EU에서 오답이 집중되는지 추적 가능.
+RAG 정답률 분석 시 confidence별 오답 분포를 추적해 알고리즘 개선에 활용.
 
 ---
 
@@ -205,8 +199,8 @@ RAG 정답률 분석 시 low EU에서 오답이 집중되는지 추적 가능.
 테스트 PDF 2종(Transformer, BERT 논문) 기준 **모든 표에 captions 있음**.
 단, 논문·공시 자료 등 실제 PDF에서는 없는 케이스가 존재할 수 있어 방어 코드 필수.
 
-- 캡션 있을 때: `table.captions` RefItem의 `cref` 역참조로 텍스트 추출 → `caption_confidence = "high"`
-- 캡션 없을 때: `doc.texts` 내 `label=caption` 원소를 bbox 거리로 매칭하는 폴백 필요 → `caption_confidence = "low"`
+- 캡션 있을 때: `table.captions` RefItem의 `cref` 역참조로 텍스트 추출 → `caption_confidence = "direct"`
+- 캡션 없을 때: `doc.texts` 내 `label=caption` 원소를 bbox 거리로 매칭하는 폴백 필요 → `caption_confidence = "inferred"`
 
 ### bbox 좌표계
 
@@ -214,7 +208,7 @@ RAG 정답률 분석 시 low EU에서 오답이 집중되는지 추적 가능.
 
 - 페이지 크기: Letter 기준 612 × 792 pt (72 dpi)
 - `t` (top) > `b` (bottom) — y축이 아래에서 위로 증가하므로 시각적 상단이 더 큰 값
-- 0~1 정규화가 필요하면 `normalize_bbox(bbox, page_width, page_height)` 사용
+- 0~1 정규화는 `caption_linker.py`에서 처리
 
 ### 텍스트 요소 label 종류
 
@@ -242,7 +236,6 @@ Transformer 논문 기준 8종 확인:
 |------|------|------|
 | `formula` label `text` 빈 문자열 | 수식이 plain text로 변환 안 됨 | EU 구성 시 formula 원소 제외 |
 | `export_to_html()` 빈 문자열 반환 | `doc` 인자 없으면 항상 빈 값 | `table.export_to_html(doc)` 필수 |
-| `coord_origin=BOTTOMLEFT` y축 반전 | t > b이므로 "위"가 더 큰 값 | 거리 계산 시 방향 주의, `normalize_bbox()` 사용 |
+| `coord_origin=BOTTOMLEFT` y축 반전 | t > b이므로 "위"가 더 큰 값 | 거리 계산 시 방향 주의 |
 | Windows 심볼릭링크 권한 오류 | HuggingFace Hub 모델 다운로드 실패 | `models/combined/` 로컬 경로로 우회 |
 | `column_header` 태깅 누락 | Docling이 헤더를 못 잡는 케이스 | `infer_headers_fallback()` 폴백으로 첫 행 추정 |
-
