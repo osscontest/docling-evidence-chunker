@@ -6,8 +6,7 @@ context_attacher.py
 attach_context_paragraphs(eu, doc) 가 메인 진입점.
 
 * bbox 거리 기반 단락 수집
-
-TODO: 코사인 유사도 필터 추가
+* 코사인 유사도 필터, 섹션 헤딩 경계 감지, 멀티컬럼 예외처리
 """
 
 from __future__ import annotations
@@ -21,9 +20,9 @@ if TYPE_CHECKING:
 # 상수
 # ---------------------------------------------------------------------------
 
-CONTEXT_WINDOW_PT = 300.0   # 표 위아래 300 PDF 포인트 이내
-SKIP_LABELS = {"page_header", "page_footer", "formula"}
+CONTEXT_WINDOW_PT = 300.0  # 표 위아래 300 PDF 포인트 이내
 CONTEXT_LABELS = {"text", "list_item", "paragraph"}
+COLUMN_OVERLAP_TOL = 20.0  # 멀티컬럼 컬럼 판별 허용 오차 (pt)
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +40,18 @@ def _get_prov(item_dict: dict) -> tuple[int, dict]:
 
 def _center_y(bbox: dict) -> float:
     return (bbox.get("t", 0.0) + bbox.get("b", 0.0)) / 2.0
+
+
+def _same_column(table_bbox: dict, para_bbox: dict) -> bool:
+    """
+    표와 단락의 x 범위가 겹치면 같은 컬럼으로 판단.
+    단일 컬럼 PDF에서는 항상 True.
+    """
+    t_l = table_bbox.get("l", 0.0)
+    t_r = table_bbox.get("r", 0.0)
+    p_l = para_bbox.get("l", 0.0)
+    p_r = para_bbox.get("r", 0.0)
+    return p_r >= t_l - COLUMN_OVERLAP_TOL and p_l <= t_r + COLUMN_OVERLAP_TOL
 
 
 # ---------------------------------------------------------------------------
@@ -86,23 +97,60 @@ def find_section_header(doc, table_page: int, table_top_y: float) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# 섹션 헤딩 경계 감지
+# ---------------------------------------------------------------------------
+
+def _has_section_boundary(
+    doc,
+    table_page: int,
+    table_edge_y: float,
+    para_cy: float,
+    direction: str,  # "above" | "below"
+) -> bool:
+    """
+    표와 단락 사이에 section_header가 있으면 True (과포함 방지).
+
+    above: para_cy < section_cy < table_edge_y
+    below: table_edge_y < section_cy < para_cy
+    """
+    for item in doc.texts:
+        d = item.model_dump()
+        if d.get("label") != "section_header":
+            continue
+        pg, bbox = _get_prov(d)
+        if pg != table_page:
+            continue
+        cy = _center_y(bbox)
+
+        if direction == "above" and table_edge_y < cy < para_cy:
+            return True
+        if direction == "below" and para_cy < cy < table_edge_y:
+            return True
+
+    return False
+
+
+# ---------------------------------------------------------------------------
 # bbox 거리 기반 단락 수집
 # ---------------------------------------------------------------------------
 
 def _collect_by_bbox(
     doc,
     table_page: int,
-    table_top_y: float,
-    table_bot_y: float,
+    table_bbox: dict,
     bbox_threshold: float,
 ) -> tuple[list[tuple[float, str]], list[tuple[float, str]]]:
     """
     같은 페이지에서 bbox 거리 기준 단락 수집.
+    다른 컬럼 단락 및 섹션 경계를 넘는 단락은 제외.
 
     Returns:
         before: [(거리, 텍스트), ...] — 표 위쪽, 거리 오름차순
         after:  [(거리, 텍스트), ...] — 표 아래쪽, 거리 오름차순
     """
+    table_top_y = table_bbox.get("t", 0.0)
+    table_bot_y = table_bbox.get("b", 0.0)
+
     before: list[tuple[float, str]] = []
     after: list[tuple[float, str]] = []
 
@@ -118,14 +166,24 @@ def _collect_by_bbox(
         if not text:
             continue
 
+        if not _same_column(table_bbox, bbox):
+            continue
+
         if cy > table_top_y:
             dist = cy - table_top_y
-            if dist <= bbox_threshold:
-                before.append((dist, text))
+            if dist > bbox_threshold:
+                continue
+            if _has_section_boundary(doc, table_page, table_top_y, cy, "above"):
+                continue
+            before.append((dist, text))
+
         elif cy < table_bot_y:
             dist = table_bot_y - cy
-            if dist <= bbox_threshold:
-                after.append((dist, text))
+            if dist > bbox_threshold:
+                continue
+            if _has_section_boundary(doc, table_page, table_bot_y, cy, "below"):
+                continue
+            after.append((dist, text))
 
     before.sort(key=lambda x: x[0])
     after.sort(key=lambda x: x[0])
@@ -133,8 +191,19 @@ def _collect_by_bbox(
 
 
 # ---------------------------------------------------------------------------
-# 임베딩 유사도 필터 (W3)
+# 임베딩 유사도 필터
 # ---------------------------------------------------------------------------
+
+_EMBEDDING_MODEL = None  # 모듈 레벨 캐시
+
+
+def _get_embedding_model():
+    global _EMBEDDING_MODEL
+    if _EMBEDDING_MODEL is None:
+        from sentence_transformers import SentenceTransformer
+        _EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+    return _EMBEDDING_MODEL
+
 
 def _embedding_filter(
     candidates: list[tuple[float, str]],
@@ -142,12 +211,29 @@ def _embedding_filter(
     sim_threshold: float,
 ) -> list[str]:
     """
-    TODO W3: 코사인 유사도 >= sim_threshold 인 단락만 통과.
+    코사인 유사도 >= sim_threshold 인 단락만 통과.
 
-    현재는 모든 단락 통과 (bbox 필터만 적용된 상태).
+    reference_text 없으면 전부 통과 (캡션 없는 표 방어).
+    sentence-transformers 미설치 시 전부 통과 (graceful degradation).
     """
-    # W3 구현 전까지 bbox 통과한 단락 전부 반환
-    return [text for _, text in candidates]
+    if not reference_text:
+        return [text for _, text in candidates]
+
+    try:
+        from sentence_transformers import util
+        model = _get_embedding_model()
+    except ImportError:
+        return [text for _, text in candidates]
+
+    if not candidates:
+        return []
+
+    ref_emb = model.encode(reference_text, convert_to_tensor=True)
+    texts = [text for _, text in candidates]
+    cand_embs = model.encode(texts, convert_to_tensor=True)
+    scores = util.cos_sim(ref_emb, cand_embs)[0]
+
+    return [text for text, score in zip(texts, scores) if score.item() >= sim_threshold]
 
 
 # ---------------------------------------------------------------------------
@@ -158,29 +244,23 @@ def attach_context_paragraphs(
     eu: "EvidenceUnit",
     doc,
     bbox_threshold: float = CONTEXT_WINDOW_PT,
-    sim_threshold: float = 0.40,    # W3에서 활성화
+    sim_threshold: float = 0.40,
 ) -> "EvidenceUnit":
     """
     EU에 인접 설명 단락 + 섹션 헤더 추가.
 
-    W2: bbox 거리 기반 수집
-    W3: 코사인 유사도 필터 추가 예정
-
     Args:
-        eu:             팀원1이 만든 EU 기본 뼈대
+        eu:             EU 기본 뼈대
         doc:            DoclingDocument
         bbox_threshold: 표 위아래 수집 범위 (PDF 포인트). 기본 300pt
-        sim_threshold:  임베딩 유사도 임계값 (W3 활성화 예정)
+        sim_threshold:  임베딩 유사도 임계값. 기본 0.40
 
     Returns:
         context_before / context_after / section_header 가 채워진 EU
     """
-    t_dict = None
+    table_bbox: dict = {}
     table_top_y = 0.0
-    table_bot_y = 0.0
 
-    # EU bbox는 0~1 normalized → 원본 pt 단위가 필요하므로
-    # doc.tables에서 해당 EU의 원본 bbox를 다시 조회
     for table in doc.tables:
         d = table.model_dump()
         prov_list = d.get("prov", [])
@@ -189,24 +269,19 @@ def attach_context_paragraphs(
         p = prov_list[0]
         if p.get("page_no", -1) != eu.page_no:
             continue
-        # eu_id 인덱스로 매칭 (eu-p{page}-{idx} 형식)
-        t_dict = d
-        table_top_y = p.get("bbox", {}).get("t", 0.0)
-        table_bot_y = p.get("bbox", {}).get("b", 0.0)
-        break   # 같은 페이지 첫 번째 표 — 다중 표 케이스는 추후 개선
+        table_bbox = p.get("bbox", {})
+        table_top_y = table_bbox.get("t", 0.0)
+        break  # 다중 표 케이스는 추후 eu_id 인덱스 매칭으로 개선
 
-    if t_dict is None:
+    if not table_bbox:
         return eu
 
-    # 섹션 헤더
     eu.section_header = find_section_header(doc, eu.page_no, table_top_y)
 
-    # bbox 수집
     before_candidates, after_candidates = _collect_by_bbox(
-        doc, eu.page_no, table_top_y, table_bot_y, bbox_threshold
+        doc, eu.page_no, table_bbox, bbox_threshold
     )
 
-    # 임베딩 필터 (W3 전까지 전부 통과)
     reference = eu.caption_text or eu.table_abstract or ""
     eu.context_before = _embedding_filter(before_candidates, reference, sim_threshold)
     eu.context_after  = _embedding_filter(after_candidates,  reference, sim_threshold)
