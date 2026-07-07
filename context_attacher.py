@@ -194,7 +194,7 @@ def _collect_by_bbox(
 # 임베딩 유사도 필터
 # ---------------------------------------------------------------------------
 
-_EMBEDDING_MODEL = None  # 모듈 레벨 캐시
+_EMBEDDING_MODEL = None  # 모듈 레벨 캐시 — EU마다 재로드 방지
 
 
 def _get_embedding_model():
@@ -258,9 +258,13 @@ def attach_context_paragraphs(
     Returns:
         context_before / context_after / section_header 가 채워진 EU
     """
-    table_bbox: dict = {}
-    table_top_y = 0.0
+    # eu_id = "eu-p{page}-{idx}" — 같은 페이지 내 표 순서 (0-based)
+    try:
+        eu_idx = int(eu.eu_id.split("-")[-1])
+    except (ValueError, IndexError):
+        eu_idx = 0
 
+    page_tables: list[dict] = []
     for table in doc.tables:
         d = table.model_dump()
         prov_list = d.get("prov", [])
@@ -269,9 +273,13 @@ def attach_context_paragraphs(
         p = prov_list[0]
         if p.get("page_no", -1) != eu.page_no:
             continue
-        table_bbox = p.get("bbox", {})
-        table_top_y = table_bbox.get("t", 0.0)
-        break  # 다중 표 케이스는 추후 eu_id 인덱스 매칭으로 개선
+        page_tables.append(p.get("bbox", {}))
+
+    if eu_idx >= len(page_tables):
+        return eu
+
+    table_bbox = page_tables[eu_idx]
+    table_top_y = table_bbox.get("t", 0.0)
 
     if not table_bbox:
         return eu
