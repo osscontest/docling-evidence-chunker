@@ -78,7 +78,7 @@ class EvidenceUnit:
     # ------------------------------------------------------------------
     bbox: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
     # 표 위치 (x1, y1, x2, y2), 0~1 normalized
-    # Docling 원본은 PDF 포인트(BOTTOMLEFT) → normalize_bbox()로 변환해서 저장
+    # Docling 원본은 PDF 포인트(BOTTOMLEFT) → bbox_utils.normalize_bbox()로 변환해서 저장
 
     # ------------------------------------------------------------------
     # 분할

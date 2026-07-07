@@ -8,7 +8,9 @@ Docling 기반 Evidence Unit 청킹 → RAG 성능 향상
 
 ```
 docling-evidence-chunker/
-├── interfaces.py              # EvidenceUnit 데이터클래스 (팀 공유 인터페이스)
+├── interfaces.py              # EvidenceUnit 데이터클래스 (팀 공유 인터페이스, 데이터 구조만)
+├── bbox_utils.py               # bbox 좌표 변환 유틸 (normalize_bbox, 팀원1)
+├── context_attacher.py         # 인접 단락·섹션헤더 탐지 (팀원2, bbox 거리 기반 PoC)
 ├── langchain_wrapper.py       # LangChain / LlamaIndex 변환 래퍼 (팀원2)
 ├── download_test_pdfs.py      # 테스트 PDF 다운로드
 ├── download_models.py         # Docling 모델 로컬 다운로드 (Windows 심볼릭링크 우회)
@@ -16,14 +18,16 @@ docling-evidence-chunker/
 ├── scripts/
 │   ├── _converter.py          # DocumentConverter 팩토리 (로컬 모델 경로)
 │   ├── _table_utils.py        # 표 처리 유틸리티 (Row Flattening 등)
+│   ├── _caption_mapper.py      # 캡션↔표 매핑 알고리즘 (팀원1, W2 PoC)
 │   ├── 01_basic_parse.py      # Docling 전체 구조 덤프
 │   ├── 02_explore_tables.py   # 표 필드 탐색 (bbox, captions, footnotes)
 │   ├── 03_explore_texts.py    # 텍스트 요소 탐색 (label 종류, 거리 계산)
 │   ├── 04_summary_report.py   # W1 탐색 보고서 생성
 │   ├── 05_table_cells.py      # 표 셀 구조 + export_to_html 확인
-│   └── 06_build_eu.py         # EvidenceUnit 실제 구성 (메인 파이프라인)
+│   ├── 06_build_eu.py         # EvidenceUnit 실제 구성 (메인 파이프라인)
+│   └── 07_caption_table_mapping_poc.py  # 캡션↔표 매핑 검증 리포트 (W2 PoC)
 ├── data/
-│   ├── pdfs/                  # 테스트 PDF (Transformer, BERT 논문)
+│   ├── pdfs/                  # 테스트 PDF (영어 논문 2종 + 한국어 보고서 + GPT-3 등)
 │   └── outputs/               # 탐색 결과 JSON
 ├── models/
 │   └── combined/              # 로컬 모델 (layout + table 병합)
@@ -32,210 +36,57 @@ docling-evidence-chunker/
 
 ---
 
-## 원본 인터페이스에서 변경된 점
+## 캡션↔표 매핑 PoC (`scripts/_caption_mapper.py`, W2, 팀원1)
 
-원본: 팀 공유 `interface-main` (26.06.29 초안)
+`table.captions` RefItem을 파싱해 표-캡션을 1:1로 연결하는 알고리즘. 우선순위 3단계로 동작:
 
-### 필드 추가
+| confidence | 의미 |
+|---|---|
+| `direct` | `captions` RefItem이 가리키는 텍스트가 캡션 패턴(`Table N`, `표 N` 등)에 맞아 그대로 채택 |
+| `inferred` | RefItem이 없거나 엉뚱한 파편을 가리켜서, 표 위/아래 bbox 거리(200pt 이내)에서 캡션처럼 생긴 텍스트를 재탐색해 찾음 |
+| `none` | 둘 다 실패, 캡션 없음 |
 
-| 필드 | 추가 이유 |
-|------|-----------|
-| `flattened_rows: list[str]` | 임베딩 모델이 표 구조보다 자연어 문장에 더 잘 반응 → Recall@1 향상 핵심 |
-| `table_abstract: Optional[str]` | 광범위 질의("이 표가 뭘 담고 있어?")에 대한 검색 커버리지 확보 |
-| `caption_confidence: Literal["direct", "inferred", "none"]` | 캡션 연결 방식을 기록해 오답 분석에 활용 |
+```python
+from _caption_mapper import map_table_caption, map_all_captions, validate_mapping
 
-### 래퍼 분리
-
-`to_langchain_document()` 메서드는 `langchain_wrapper.py`의 `eu_to_langchain(eu)`로 분리.
-`interfaces.py`는 순수 데이터 구조만 담음.
-
-### `text` property 조립 순서 변경
-
-원본:
-```
-section_header → context_before → caption_text → table_html → footnote_text → context_after
+mapping = map_table_caption(doc, table, table_index)
+# CaptionMapping(caption_text=..., confidence="direct"|"inferred"|"none", multi_caption=..., cross_page=...)
 ```
 
-변경 후:
-```
-section_header → context_before → caption_text → table_abstract → table_html → flattened_rows → footnote_text → context_after
-```
+`06_build_eu.py`가 이 모듈을 직접 호출해 EU의 `caption_text` / `caption_confidence`를 채움.
+검증 리포트: `python scripts/07_caption_table_mapping_poc.py --all`
 
-### 필드 설명 보강
+### 한국어 PDF 테스트로 발견한 버그 2건
 
-| 필드 | 원본 | 변경 |
-|------|------|------|
-| `table_html` | `table.export_to_html()` | `table.export_to_html(doc)` — **`doc` 인자 필수** (없으면 빈 문자열) |
-| `bbox` | "0~1 normalized (Docling 기본 좌표계)" | Docling 원본은 PDF 포인트(BOTTOMLEFT). 팀원1 모듈에서 정규화 후 저장 |
-| `context_before/after` | "bbox + 임베딩 통과" | 현재 bbox 300pt 이내 단락 수집. 임베딩 필터는 W3에 추가 예정 |
+영어 논문 2종만으로는 100% 매핑돼서 예외 케이스가 0건 — 알고리즘이 좋아서가 아니라 테스트셋이 너무 쉬워서였을 가능성이 있었음. 한국은행 잠재성장률 보고서(한국어)와 GPT-3 논문을 테스트셋에 추가(`download_test_pdfs.py`)해서 검증한 결과, 실제 버그 2건을 발견하고 수정함:
+
+- RefItem이 캡션이 아닌 파편("(단위: 1), %)")을 가리키는 경우 → 캡션 패턴 검증 후 `inferred`로 재탐색해 정정
+- RefItem 자체가 비어있는 경우 → bbox fallback으로 `<표 N>` 형식의 실제 캡션을 찾아냄
+
+전체 4개 PDF(영어 2 + 한국어 1 + GPT-3) 기준 표 23개 중 20개 매핑 성공 (87%), confidence 분포(`direct`/`inferred`/`none`)까지 리포트에 포함.
+
+**아직 미검증**: `multi_caption`(캡션 2개 이상), `cross_page`(캡션이 다른 페이지) 감지 로직은 구현돼 있으나, 지금까지 테스트한 PDF 어디서도 실제로 발동한 적이 없어 검증되지 않은 상태.
 
 ---
 
-## EvidenceUnit 인터페이스
+## 알려진 이슈 / 진행 중인 문제
 
-`interfaces.py` 참고. 표 하나당 EU 하나 생성.
+### 스캔본(OCR 필요) PDF — 현재 설정으로는 처리 불가
 
-```python
-from interfaces import EvidenceUnit
-from langchain_wrapper import eu_to_langchain
+`_converter.py`는 `do_ocr=False`로 하드코딩되어 있음. 텍스트 레이어 없는 스캔본 PDF로 테스트한 결과:
+- `do_ocr=False` (현재): 표는 감지되나 셀·텍스트 전부 0개 (빈 껍데기)
+- `do_ocr=True`로 켜면 구조는 살아나지만, 기본 OCR 엔진(RapidOCR)의 한국어 인식 품질이 실사용 불가 수준으로 나쁨
 
-eu = EvidenceUnit(
-    eu_id="eu-p6-0",          # "eu-p{페이지}-{인덱스}"
-    page_no=6,
-    section_header="4 Experiments",
-    caption_text="Table 1: ...",
-    table_html="<table>...</table>",
-    flattened_rows=["BERT LARGE의 MNLI는 86.7이다.", ...],
-    table_abstract="[4 Experiments] Table 1: ... 열: MNLI, QQP ... 총 4행.",
-    footnote_text=None,
-    context_before=[],
-    context_after=["The results show that..."],
-    bbox=(0.12, 0.82, 0.88, 0.93),   # 0~1 normalized, BOTTOMLEFT
-    caption_confidence="direct",      # "direct" | "inferred" | "none"
-)
+한국어 전용 OCR 설정이 필요해 보이나 별도 작업으로 분리 필요. **미해결.**
 
-# 임베딩/LangChain에 넘길 텍스트
-print(eu.text)
+### 큰 PDF(15페이지 이상) 처리 시 메모리 부족
 
-# LangChain Document로 변환
-doc = eu_to_langchain(eu)
-```
+15페이지가 넘는 PDF(어텐션 논문 자체, GPT-3 75p, OECD 통계 부록 69p 등)를 변환하면 문서 종류·길이와 무관하게 **항상 15페이지 근처부터 `std::bad_alloc`** 발생. Docling 파이프라인이 페이지 처리마다 메모리를 누적하고 해제하지 않는 문제(메모리 누수)로 추정됨.
 
-### EvidenceUnit 필드 요약
+- TableFormer를 FAST 모드로 바꿔도 동일 → 표 인식 모델 문제 아님
+- `page_range`로 앞부분만 잘라도 같은 프로세스 안에서는 여전히 발생 → 프로세스 단위로 나눠 처리해야 회피 가능할 것으로 추정
+- 원인 진단만 해두고 **아직 해결 안 됨**. 팀원3의 W7 벤치마크(PDF 50종, 대부분 15페이지 이상 예상)에 영향을 줄 수 있어 공유해둠. 캡션 매핑 알고리즘과는 무관한 별개의 인프라/리소스 문제.
 
-| 필드 | 타입 | 설명 |
-|------|------|------|
-| `eu_id` | `str` | 고유 ID (`"eu-p3-0"` = 3페이지 첫 번째 EU) |
-| `page_no` | `int` | 페이지 번호 |
-| `section_header` | `Optional[str]` | 표가 속한 섹션 제목 |
-| `caption_text` | `Optional[str]` | 표 제목 |
-| `table_html` | `Optional[str]` | 표 HTML (`table.export_to_html(doc)`) |
-| `footnote_text` | `Optional[str]` | 표 아래 주석 |
-| `context_before` | `list[str]` | 표 위쪽 설명 단락 (bbox 300pt 이내) |
-| `context_after` | `list[str]` | 표 아래쪽 설명 단락 (bbox 300pt 이내) |
-| `flattened_rows` | `list[str]` | 셀별 자연어 문장 (임베딩 Recall@1 향상용) |
-| `table_abstract` | `Optional[str]` | 표 전체 요약 (광범위 질의용) |
-| `bbox` | `tuple[float,float,float,float]` | 표 위치 (x1,y1,x2,y2), 0~1 normalized |
-| `caption_confidence` | `Literal["direct", "inferred", "none"]` | 캡션 연결 신뢰도 |
-| `is_split` | `bool` | 행 분할 여부 |
-| `split_index` | `Optional[int]` | 분할 순서 (0-based) |
-| `total_splits` | `Optional[int]` | 총 분할 수 |
-| `text` *(property)* | `str` | 임베딩용 최종 텍스트 (자동 조립, 직접 넣지 말 것) |
+### 인터페이스 설계 미결정 사항
 
----
-
-## 구현된 핵심 기능 (_table_utils.py)
-
-### 1. Row Flattening (셀 → 자연어 문장)
-
-임베딩 모델은 표 구조보다 자연어에 더 잘 반응 → Recall@1 향상 핵심 항목.
-
-```python
-# 입력: Docling table_cells
-# 출력: 자연어 문장 목록
-flatten_to_sentences(cells, num_rows, num_cols, footnote_text)
-
-# 예시 출력
-"BERT LARGE의 MNLI-(m/mm) 392k는 86.7/85.9이다."
-"Self-Attention의 Complexity per Layer는 O(n²·d)이다."
-```
-
-### 2. 다단/병합 헤더 처리
-
-`col_span` / `row_span` 필드를 읽어 헤더 범위를 열 전체에 전파.
-다단 헤더는 `"분기 / Q1"` 형태로 이어붙임.
-
-```python
-build_col_header_map(cells, num_cols)  # col_span 처리
-build_row_header_map(cells, num_rows)  # row_span 처리
-```
-
-### 3. 각주 마커 셀 단위 전파
-
-`*†‡` 마커가 있는 셀에만 해당 각주 텍스트를 붙임.
-행 분할 시 맥락 손실 방지.
-
-```python
-detect_cell_marker("100*")  # → ("100", "*")
-# 문장: "APAC의 Q2는 100이다. (주: 잠정치)"
-```
-
-### 4. 헤더 추론 폴백
-
-Docling이 헤더 태깅을 못 했을 때 첫 행 패턴으로 자동 추론.
-전부 숫자면 `Col0/Col1/...` 로 대체.
-
-```python
-infer_headers_fallback(cells, num_cols)
-```
-
-### 5. Table Abstract (멀티그래뉼래리티 검색)
-
-표 전체 요약을 별도 필드로 생성. LLM 없이 규칙 기반.
-- 광범위 질의 ("지역별 매출 표가 어디 있어?") → abstract가 강하게 반응
-- 구체적 질의 ("Q2 APAC 매출이 얼마야?") → flattened_rows가 강하게 반응
-
-```python
-build_table_abstract(caption_text, col_map, num_rows, section_header)
-# "[4 Experiments] Table 1: GLUE Test results... 열: MNLI, QQP... 총 4행 데이터."
-```
-
-### 6. 캡션 신뢰도 메타데이터
-
-```python
-caption_confidence = "direct"    # captions RefItem으로 직접 연결
-caption_confidence = "inferred"  # bbox 거리로 추정한 캡션
-caption_confidence = "none"      # 캡션 없음
-```
-
-RAG 정답률 분석 시 confidence별 오답 분포를 추적해 알고리즘 개선에 활용.
-
----
-
-## W1 탐색 주요 발견 사항
-
-### captions 필드가 항상 채워져 있는가?
-
-테스트 PDF 2종(Transformer, BERT 논문) 기준 **모든 표에 captions 있음**.
-단, 논문·공시 자료 등 실제 PDF에서는 없는 케이스가 존재할 수 있어 방어 코드 필수.
-
-- 캡션 있을 때: `table.captions` RefItem의 `cref` 역참조로 텍스트 추출 → `caption_confidence = "direct"`
-- 캡션 없을 때: `doc.texts` 내 `label=caption` 원소를 bbox 거리로 매칭하는 폴백 필요 → `caption_confidence = "inferred"`
-
-### bbox 좌표계
-
-**PDF 포인트 (pt) 단위, 원점은 페이지 왼쪽 하단 (BOTTOMLEFT).**
-
-- 페이지 크기: Letter 기준 612 × 792 pt (72 dpi)
-- `t` (top) > `b` (bottom) — y축이 아래에서 위로 증가하므로 시각적 상단이 더 큰 값
-- 0~1 정규화는 `caption_linker.py`에서 처리
-
-### 텍스트 요소 label 종류
-
-Transformer 논문 기준 8종 확인:
-
-| label | 설명 | EU 활용 |
-|-------|------|---------|
-| `text` | 일반 문단 | context_before / after |
-| `section_header` | 섹션 제목 (`level` 필드 포함) | section_header 필드 |
-| `caption` | 표·그림 캡션 | caption_text 폴백 탐색 |
-| `list_item` | 리스트 항목 | context_before / after |
-| `footnote` | 각주 | footnote_text |
-| `formula` | 수식 | 미사용 (아래 예외 참고) |
-| `page_header` | 페이지 상단 | 제외 |
-| `page_footer` | 페이지 하단 | 제외 |
-
-### 표와 캡션이 다른 페이지에 있는 케이스가 있는가?
-
-테스트 PDF 2종 기준 **없음 — 모두 같은 페이지**.
-단, 실제 PDF에서 발생 가능. bbox 거리 계산보다 **`captions` RefItem 역참조 방식이 크로스 페이지에서도 안전**하게 동작함.
-
-### 탐색 중 발견한 예외 케이스
-
-| 예외 | 내용 | 대응 |
-|------|------|------|
-| `formula` label `text` 빈 문자열 | 수식이 plain text로 변환 안 됨 | EU 구성 시 formula 원소 제외 |
-| `export_to_html()` 빈 문자열 반환 | `doc` 인자 없으면 항상 빈 값 | `table.export_to_html(doc)` 필수 |
-| `coord_origin=BOTTOMLEFT` y축 반전 | t > b이므로 "위"가 더 큰 값 | 거리 계산 시 방향 주의 |
-| Windows 심볼릭링크 권한 오류 | HuggingFace Hub 모델 다운로드 실패 | `models/combined/` 로컬 경로로 우회 |
-| `column_header` 태깅 누락 | Docling이 헤더를 못 잡는 케이스 | `infer_headers_fallback()` 폴백으로 첫 행 추정 |
+`flattened_rows`, `table_abstract`를 EvidenceUnit 인터페이스에 계속 포함할지, 별도 모듈로 뺄지 아직 팀 논의 중 (현재는 포함된 상태 유지).
