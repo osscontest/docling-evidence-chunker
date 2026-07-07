@@ -2,7 +2,7 @@
 STEP 6: EvidenceUnit 실제 구성.
 
 포함 기능:
-  - caption_text    : captions RefItem 역참조
+  - caption_text    : _caption_mapper.map_table_caption() (RefItem 직접 연결 + bbox fallback)
   - section_header  : 표 위쪽 가장 가까운 섹션 헤더
   - context_before/after: 같은 페이지 300pt 이내 단락
   - table_html      : export_to_html(doc)
@@ -10,7 +10,7 @@ STEP 6: EvidenceUnit 실제 구성.
   - table_abstract  : 표 요약 문자열 (multi-granularity 검색)
   - footnote_text   : footnotes RefItem 역참조
   - bbox            : normalize_bbox() 0~1 변환
-  - caption_confidence: direct / none
+  - caption_confidence: direct / inferred / none (_caption_mapper.CaptionMapping.confidence)
 
 Usage:
     python scripts/06_build_eu.py [path/to/file.pdf]
@@ -155,7 +155,9 @@ def find_context(
 # ---------------------------------------------------------------------------
 
 def build_evidence_units(doc) -> list:
-    from interfaces import EvidenceUnit, normalize_bbox
+    from interfaces import EvidenceUnit
+    from bbox_utils import normalize_bbox
+    from _caption_mapper import map_table_caption
     from _table_utils import (
         build_col_header_map,
         build_row_header_map,
@@ -172,7 +174,7 @@ def build_evidence_units(doc) -> list:
     eu_list: list[EvidenceUnit] = []
     page_counters: dict[int, int] = {}
 
-    for table in doc.tables:
+    for table_index, table in enumerate(doc.tables):
         t_dict = table.model_dump()
         pg, bbox = get_prov(t_dict)
         if pg == -1:
@@ -185,17 +187,10 @@ def build_evidence_units(doc) -> list:
         table_top_y = bbox.get("t", 0.0)
         table_bot_y = bbox.get("b", 0.0)
 
-        # ── 캡션 (confidence 판별 포함) ──────────────────────────────
-        caption_text = None
-        caption_confidence = "none"
-        cap_refs = t_dict.get("captions", [])
-        if cap_refs:
-            cref = (cap_refs[0].get("cref", "")
-                    if isinstance(cap_refs[0], dict)
-                    else getattr(cap_refs[0], "cref", ""))
-            cap_dict = resolve_ref(doc, cref)
-            caption_text = cap_dict.get("text") or None
-            caption_confidence = "direct" if caption_text else "none"
+        # ── 캡션 (RefItem 직접 연결 + bbox fallback, _caption_mapper.py) ──
+        cap_mapping = map_table_caption(doc, table, table_index)
+        caption_text = cap_mapping.caption_text
+        caption_confidence = cap_mapping.confidence
 
         # ── 각주 ────────────────────────────────────────────────────
         footnote_text = None
@@ -271,8 +266,9 @@ def main():
     eu_list = build_evidence_units(doc)
     print(f"  총 {len(eu_list)}개 EvidenceUnit 생성\n")
 
+    conf_tags = {"direct": "[DIRECT]", "inferred": "[INFER] ", "none": "[NONE]  "}
     for eu in eu_list:
-        conf_tag = "[HIGH]" if eu.caption_confidence == "high" else "[LOW] "
+        conf_tag = conf_tags[eu.caption_confidence]
         print(f"  {conf_tag} [{eu.eu_id}] p{eu.page_no}")
         print(f"    section_header  : {(eu.section_header or 'None')[:60]}")
         print(f"    caption_text    : {(eu.caption_text or 'None')[:60]}")
