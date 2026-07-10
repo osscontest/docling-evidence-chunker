@@ -8,10 +8,10 @@ STEP 7 (W2 PoC): 캡션 ↔ 표 매핑 알고리즘 검증.
   - 표-캡션 1:1 매핑 알고리즘 프로토타입 (_caption_mapper.py)
   - 매핑률, 복수 캡션, cross-page, 충돌(collision) 케이스 검증/리포트
 
-W3에서 예정된 작업 (여기서는 감지만 하고 실제 처리는 하지 않음):
+W3 예외처리 (_caption_mapper.py에서 실제 처리, scripts/08에서 합성 데이터로 검증):
   - 캡션 없는 표 fallback (bbox 거리 매칭)
-  - 다음 페이지 캡션 케이스 연결
-  - 복수 캡션 병합 처리
+  - 다음/이전 페이지 캡션 케이스 실제 연결 (cross_page=True)
+  - 복수 캡션 병합 처리 (multi_caption=True)
 
 Usage:
     python scripts/07_caption_table_mapping_poc.py [path/to/file.pdf]
