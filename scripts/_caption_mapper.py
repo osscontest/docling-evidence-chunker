@@ -17,9 +17,18 @@ _caption_mapper.py
     두 경우 모두 caption_confidence="inferred"로 표시 (interfaces.EvidenceUnit.
     caption_confidence의 direct/inferred/none 표기와 통일).
 
-W3 예정 (여기서는 처리하지 않음):
-    - 다음 페이지 캡션 케이스 실제 연결 (지금은 cross_page 플래그로 감지만 함)
-    - 복수 캡션 병합 처리
+W3 예외처리 (본 파일에서 처리):
+    - 캡션 없는 표: 아래 fallback을 모두 거치고도 못 찾으면 confidence="none"
+    - 복수 캡션 병합: captions RefItem이 2개 이상이면 캡션 패턴에 맞는 텍스트를
+      모두 이어붙여 caption_text로 사용 (multi_caption=True로 표시)
+    - 다음/이전 페이지 캡션: 같은 페이지 bbox fallback도 실패하면 표 바로 앞/뒤
+      페이지에서 캡션 패턴 텍스트를 재탐색 (_find_caption_adjacent_page,
+      cross_page=True로 표시)
+
+    실제 테스트 PDF(영어 논문 2 + 한국어 보고서 + GPT-3) 어디에서도 복수 캡션·
+    cross-page 케이스가 실제로 발동한 적은 없었음 (README 참고). 그래도 향후
+    입력 문서에서 발생할 수 있는 케이스라 합성 데이터로 검증함
+    (scripts/08_caption_exception_tests.py).
 """
 from __future__ import annotations
 
@@ -39,6 +48,12 @@ _CANDIDATE_LABELS = {"caption", "section_header", "text"}
 # 실제 버그 사례("(단위: 1), %)" 같은 파편)를 걸러내는 핵심 필터.
 _CAPTION_PATTERN = re.compile(r"(table|figure|fig|표|그림)\s*\.?\s*\d+", re.IGNORECASE)
 _MIN_CAPTION_LEN = 8
+
+# 인접 페이지 캡션 탐색을 허용할 "페이지 경계 근처" 범위 (페이지 높이 대비 비율).
+# 표가 페이지 위/아래 15% 안쪽에 걸쳐 있을 때만 인접 페이지를 본다.
+# 실제 버그 사례: GPT-3 논문에서 목차가 표로 오인식된 케이스(표가 페이지 중간을
+# 거의 다 차지) -- 게이팅 없이는 다음 페이지의 무관한 Figure 캡션을 잘못 채택함.
+_ADJACENT_PAGE_EDGE_RATIO = 0.15
 
 
 @dataclass
@@ -125,14 +140,91 @@ def _find_caption_by_bbox(
     return candidates[0][1]
 
 
+def _get_page_height(doc, page_no: int) -> Optional[float]:
+    """doc.pages[page_no].size.height 조회. 페이지 정보 없으면 None."""
+    pages = getattr(doc, "pages", None)
+    if not pages:
+        return None
+    pg = pages.get(page_no) if hasattr(pages, "get") else None
+    if pg is None:
+        return None
+    d = pg.model_dump() if hasattr(pg, "model_dump") else pg
+    return (d.get("size") or {}).get("height")
+
+
+def _find_caption_adjacent_page(
+    doc, table_page: int, table_top_y: float, table_bot_y: float
+) -> tuple[Optional[str], bool]:
+    """
+    같은 페이지 bbox fallback도 실패했을 때, 표 바로 앞/뒤 페이지에서 캡션 재탐색.
+
+    실사례: 표가 페이지 최상단에서 시작하면 캡션은 이전 페이지 맨 아래에,
+            표가 페이지 최하단에서 끝나면 캡션은 다음 페이지 맨 위에 남을 수 있음.
+
+    표가 페이지 경계(위/아래 _ADJACENT_PAGE_EDGE_RATIO 이내)에 걸쳐 있을 때만
+    탐색한다. 게이팅 없이 무조건 인접 페이지를 보면, 표가 페이지 중간에 있을 때도
+    우연히 옆 페이지에 있는 무관한 그림/표의 캡션을 잘못 채택할 수 있음
+    (실사례: GPT-3 논문에서 목차가 표로 오인식된 케이스).
+
+    페이지가 다르면 좌표계(페이지별 y 원점)가 서로 달라 bbox 거리 비교가
+    무의미하므로, "이전 페이지에서 가장 아래" / "다음 페이지에서 가장 위"에
+    있는 캡션 패턴 텍스트를 채택한다.
+
+    Returns:
+        (caption_text, found) — 못 찾거나 게이팅에 걸리면 (None, False)
+    """
+    page_height = _get_page_height(doc, table_page)
+    if not page_height:
+        return None, False
+
+    near_top = table_top_y >= page_height * (1 - _ADJACENT_PAGE_EDGE_RATIO)
+    near_bottom = table_bot_y <= page_height * _ADJACENT_PAGE_EDGE_RATIO
+    if not near_top and not near_bottom:
+        return None, False
+
+    prev_candidates: list[tuple[float, str]] = []
+    next_candidates: list[tuple[float, str]] = []
+
+    for item in doc.texts:
+        d = item.model_dump()
+        if d.get("label") not in _CANDIDATE_LABELS:
+            continue
+        prov_list = d.get("prov", [])
+        if not prov_list:
+            continue
+        pg = prov_list[0].get("page_no", -1)
+        text = d.get("text", "").strip()
+        if not _looks_like_caption(text):
+            continue
+        cy = _center_y(prov_list[0].get("bbox", {}))
+
+        if near_top and pg == table_page - 1:
+            prev_candidates.append((cy, text))  # 페이지 맨 아래 = cy 최솟값
+        elif near_bottom and pg == table_page + 1:
+            next_candidates.append((cy, text))  # 페이지 맨 위 = cy 최댓값
+
+    if prev_candidates:
+        prev_candidates.sort(key=lambda x: x[0])
+        return prev_candidates[0][1], True
+
+    if next_candidates:
+        next_candidates.sort(key=lambda x: -x[0])
+        return next_candidates[0][1], True
+
+    return None, False
+
+
 def map_table_caption(doc, table, table_index: int) -> CaptionMapping:
     """
     단일 표에 대한 캡션 매핑 (1:1).
 
     우선순위:
-      1. captions RefItem이 가리키는 텍스트가 캡션답게 생겼으면 그대로 채택 (direct)
-      2. RefItem이 없거나 파편을 가리키면 bbox 거리로 캡션 재탐색 (inferred)
-      3. 둘 다 실패하면 캡션 없음 (none)
+      1. captions RefItem이 가리키는 텍스트가 캡션답게 생겼으면 채택 (direct).
+         RefItem이 2개 이상(복수 캡션)이면 캡션 패턴에 맞는 텍스트를 모두 병합.
+      2. RefItem이 없거나 전부 파편을 가리키면 같은 페이지 bbox 거리로 재탐색 (inferred)
+      3. 같은 페이지에서도 못 찾으면 표 바로 앞/뒤 페이지에서 재탐색
+         (inferred, cross_page=True)
+      4. 전부 실패하면 캡션 없음 (none)
     """
     t_dict = table.model_dump()
     table_page = _get_prov_page(t_dict)
@@ -144,25 +236,30 @@ def map_table_caption(doc, table, table_index: int) -> CaptionMapping:
     cap_refs = t_dict.get("captions", [])
     multi_caption = len(cap_refs) > 1
     cross_page = False
-    direct_text: Optional[str] = None
-    direct_ref: Optional[str] = None
 
-    if cap_refs:
-        primary_cref = _cref_of(cap_refs[0])
-        cap_dict = resolve_ref(doc, primary_cref)
+    # captions RefItem이 가리키는 텍스트 전부 검증 후 유효한 것만 병합
+    # (복수 캡션 케이스: "Table 1: ..." + "(continued)" 같이 여러 RefItem이
+    #  각각 캡션답게 생긴 텍스트를 가리킬 수 있음)
+    resolved_texts: list[str] = []
+    resolved_refs: list[str] = []
+    for ref in cap_refs:
+        cref = _cref_of(ref)
+        cap_dict = resolve_ref(doc, cref)
         candidate_text = cap_dict.get("text") or None
+        if not _looks_like_caption(candidate_text):
+            continue
         caption_page = _get_prov_page(cap_dict)
-        cross_page = caption_page != -1 and caption_page != table_page
+        if caption_page != -1 and caption_page != table_page:
+            cross_page = True
+        resolved_texts.append(candidate_text.strip())
+        resolved_refs.append(cref)
 
-        if _looks_like_caption(candidate_text):
-            direct_text, direct_ref = candidate_text, primary_cref
-
-    if direct_text:
+    if resolved_texts:
         return CaptionMapping(
             table_index=table_index,
             page_no=table_page,
-            caption_text=direct_text,
-            caption_ref=direct_ref,
+            caption_text=" ".join(resolved_texts),
+            caption_ref="; ".join(resolved_refs),
             confidence="direct",
             multi_caption=multi_caption,
             cross_page=cross_page,
@@ -177,7 +274,21 @@ def map_table_caption(doc, table, table_index: int) -> CaptionMapping:
             caption_ref=None,
             confidence="inferred",
             multi_caption=multi_caption,
-            cross_page=cross_page,
+            cross_page=False,
+        )
+
+    adjacent_text, found_adjacent = _find_caption_adjacent_page(
+        doc, table_page, table_top_y, table_bot_y
+    )
+    if found_adjacent:
+        return CaptionMapping(
+            table_index=table_index,
+            page_no=table_page,
+            caption_text=adjacent_text,
+            caption_ref=None,
+            confidence="inferred",
+            multi_caption=multi_caption,
+            cross_page=True,
         )
 
     return CaptionMapping(
