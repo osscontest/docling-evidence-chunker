@@ -25,7 +25,8 @@ docling-evidence-chunker/
 │   ├── 04_summary_report.py   # W1 탐색 보고서 생성
 │   ├── 05_table_cells.py      # 표 셀 구조 + export_to_html 확인
 │   ├── 06_build_eu.py         # EvidenceUnit 실제 구성 (메인 파이프라인)
-│   └── 07_caption_table_mapping_poc.py  # 캡션↔표 매핑 검증 리포트 (W2 PoC)
+│   ├── 07_caption_table_mapping_poc.py  # 캡션↔표 매핑 검증 리포트 (W2 PoC)
+│   └── 08_caption_exception_tests.py    # 캡션 예외처리 검증 (W3, 합성 데이터)
 ├── data/
 │   ├── pdfs/                  # 테스트 PDF (영어 논문 2종 + 한국어 보고서 + GPT-3 등)
 │   └── outputs/               # 탐색 결과 JSON
@@ -65,7 +66,15 @@ mapping = map_table_caption(doc, table, table_index)
 
 전체 4개 PDF(영어 2 + 한국어 1 + GPT-3) 기준 표 23개 중 20개 매핑 성공 (87%), confidence 분포(`direct`/`inferred`/`none`)까지 리포트에 포함.
 
-**아직 미검증**: `multi_caption`(캡션 2개 이상), `cross_page`(캡션이 다른 페이지) 감지 로직은 구현돼 있으나, 지금까지 테스트한 PDF 어디서도 실제로 발동한 적이 없어 검증되지 않은 상태.
+### 캡션 예외처리 (W3)
+
+세 가지 예외 케이스를 `_caption_mapper.py`에서 실제로 처리하도록 완성함:
+
+- **캡션 없는 표**: 아래 fallback을 모두 거치고도 못 찾으면 `caption_confidence="none"`으로 표시 (표는 유지, `caption_text=None`).
+- **복수 캡션 (`multi_caption=True`)**: `captions` RefItem이 2개 이상이면 각각을 개별 검증해, 캡션 패턴에 맞는 텍스트를 모두 이어붙여 `caption_text`로 사용. RefItem 중 일부만 파편이면 유효한 것만 채택.
+- **다음/이전 페이지 캡션 (`cross_page=True`)**: 같은 페이지 bbox fallback도 실패하면 표 바로 앞/뒤 페이지에서 캡션 패턴 텍스트를 재탐색 (`_find_caption_adjacent_page`). 페이지가 다르면 좌표계가 달라 bbox 거리 비교가 무의미하므로, 이전 페이지는 맨 아래, 다음 페이지는 맨 위 텍스트를 채택.
+
+실제 테스트 PDF 4종(표 23개) 어디서도 `multi_caption`/`cross_page` 케이스가 실제로 발동한 적은 없었음 — 알고리즘이 좋아서가 아니라 이 케이스 자체가 흔치 않아서일 가능성이 높음. 실 데이터로 재현이 안 되므로 합성(mock) 문서로 세 케이스를 직접 검증함: `python scripts/08_caption_exception_tests.py`.
 
 ---
 
