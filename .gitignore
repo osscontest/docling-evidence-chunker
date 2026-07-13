@@ -1,0 +1,35 @@
+# 모델 파일 (용량 큼 — 로컬 다운로드)
+models/
+
+# 테스트 PDF
+data/pdfs/
+
+# 탐색 결과 JSON (재생성 가능)
+data/outputs/
+
+# 보고서 (재생성 가능)
+reports/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# 환경변수
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
