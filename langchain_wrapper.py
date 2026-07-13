@@ -2,8 +2,6 @@
 langchain_wrapper.py
 
 EvidenceUnit → LangChain / LlamaIndex 변환 래퍼
-
-26.07.01 기준
 """
 
 from __future__ import annotations
@@ -54,12 +52,41 @@ def eu_to_langchain(eu: "EvidenceUnit") -> "LangChainDocument":
 
 
 # ---------------------------------------------------------------------------
-# LlamaIndex (W4 예정)
+# LlamaIndex
 # ---------------------------------------------------------------------------
 
-def eu_to_llamaindex(eu: "EvidenceUnit"):
+try:
+    from llama_index.core.schema import TextNode as LlamaIndexTextNode
+except ImportError:
+    LlamaIndexTextNode = None  # type: ignore
+
+
+def eu_to_llamaindex(eu: "EvidenceUnit") -> "LlamaIndexTextNode":
     """
     EvidenceUnit → LlamaIndex TextNode 변환.
-    W4에 구현.
+    LlamaIndex RAG 파이프라인에 넘길 때 사용.
+
+    Args:
+        eu: 완성된 EvidenceUnit (split 포함)
+
+    Returns:
+        LlamaIndex TextNode
     """
-    raise NotImplementedError  # W4에 구현
+    if LlamaIndexTextNode is None:
+        raise ImportError("llama-index-core is not installed. pip install llama-index-core")
+
+    return LlamaIndexTextNode(
+        id_=eu.eu_id,
+        text=eu.text,
+        metadata={
+            "eu_id": eu.eu_id,
+            "page_no": eu.page_no,
+            "section_header": eu.section_header,
+            "caption_text": eu.caption_text,
+            "bbox": list(eu.bbox),
+            "is_split": eu.is_split,
+            "split_index": eu.split_index,
+            "total_splits": eu.total_splits,
+            "caption_confidence": eu.caption_confidence,
+        },
+    )
