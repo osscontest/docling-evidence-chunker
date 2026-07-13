@@ -1,4 +1,3 @@
-# token_counter.py
 import tiktoken
 from interfaces import EvidenceUnit
 

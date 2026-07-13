@@ -1,0 +1,245 @@
+"""
+STEP 8 (W3): 캡션 예외처리 검증 — 캡션 없는 표 / 복수 캡션 / 다음(이전) 페이지 캡션.
+
+담당: 팀원 1 (캡션↔표 연결, EU 핵심 anchor 로직)
+
+배경:
+    07_caption_table_mapping_poc.py로 검증한 실제 테스트 PDF(영어 논문 2 +
+    한국어 보고서 + GPT-3, 표 23개) 어디에서도 multi_caption / cross_page 케이스가
+    실제로 발동한 적이 없었음 (README "아직 미검증" 항목). 실 데이터로 재현이 안 되므로
+    합성(mock) Docling 문서를 만들어 _caption_mapper.map_table_caption()의 세 가지
+    예외 처리 분기를 직접 검증한다.
+
+    Docling 실제 객체 대신, resolve_ref()가 기대하는 최소 인터페이스
+    (.model_dump() 반환, doc.texts / doc.tables 리스트)만 흉내낸 Fake 객체 사용.
+
+Usage:
+    python scripts/08_caption_exception_tests.py
+"""
+import sys
+import os
+
+if hasattr(sys.stdout, 'buffer'):
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+from _caption_mapper import map_table_caption
+
+
+# ---------------------------------------------------------------------------
+# Fake Docling 객체 (model_dump() 인터페이스만 흉내)
+# ---------------------------------------------------------------------------
+
+class FakeItem:
+    def __init__(self, label, text, page_no, t, b, l=0.0, r=100.0):
+        self._d = {
+            "label": label,
+            "text": text,
+            "prov": [{"page_no": page_no, "bbox": {"l": l, "t": t, "r": r, "b": b}}],
+        }
+
+    def model_dump(self):
+        return self._d
+
+
+class FakeTable:
+    def __init__(self, page_no, t, b, captions=None):
+        self._d = {
+            "prov": [{"page_no": page_no, "bbox": {"l": 0.0, "t": t, "r": 100.0, "b": b}}],
+            "captions": captions or [],
+        }
+
+    def model_dump(self):
+        return self._d
+
+
+class FakePage:
+    def __init__(self, height, width=612.0):
+        self._d = {"size": {"width": width, "height": height}}
+
+    def model_dump(self):
+        return self._d
+
+
+class FakeDoc:
+    def __init__(self, texts, tables=None, page_height=None):
+        self.texts = texts
+        self.tables = tables or []
+        # page_height가 주어지면 1~5페이지 모두 같은 크기라고 가정 (테스트 단순화용)
+        self.pages = (
+            {pg: FakePage(page_height) for pg in range(1, 6)} if page_height else {}
+        )
+
+    # resolve_ref()가 getattr(doc, "texts")[idx] 형태로 접근
+    def __getitem__(self, idx):
+        raise NotImplementedError
+
+
+# ---------------------------------------------------------------------------
+# 검증 헬퍼
+# ---------------------------------------------------------------------------
+
+PASS = 0
+FAIL = 0
+
+
+def check(name: str, condition: bool, detail: str = "") -> None:
+    global PASS, FAIL
+    if condition:
+        PASS += 1
+        print(f"  [PASS] {name}")
+    else:
+        FAIL += 1
+        print(f"  [FAIL] {name}  {detail}")
+
+
+def section(title: str) -> None:
+    print(f"\n{'='*60}\n  {title}\n{'='*60}")
+
+
+# ---------------------------------------------------------------------------
+# 케이스 1: 캡션 없는 표
+# ---------------------------------------------------------------------------
+
+def test_no_caption():
+    section("케이스 1: 캡션 없는 표")
+
+    texts = [
+        FakeItem("text", "이 표는 실험 결과를 나타내지 않는다.", page_no=1, t=500, b=480),
+    ]
+    doc = FakeDoc(texts=texts)
+    table = FakeTable(page_no=1, t=400, b=200, captions=[])
+
+    m = map_table_caption(doc, table, table_index=0)
+    check("confidence == none", m.confidence == "none", m.confidence)
+    check("caption_text is None", m.caption_text is None, str(m.caption_text))
+    check("multi_caption False", m.multi_caption is False)
+
+
+# ---------------------------------------------------------------------------
+# 케이스 2: 복수 캡션 병합
+# ---------------------------------------------------------------------------
+
+def test_multi_caption():
+    section("케이스 2: 복수 캡션 병합")
+
+    texts = [
+        FakeItem("caption", "Table 1: 지역별 매출 비교", page_no=1, t=420, b=410),
+        FakeItem("caption", "표 1. (전년 대비 증감률 포함)", page_no=1, t=410, b=400),
+    ]
+    doc = FakeDoc(texts=texts)
+    captions = [{"cref": "#/texts/0"}, {"cref": "#/texts/1"}]
+    table = FakeTable(page_no=1, t=400, b=200, captions=captions)
+
+    m = map_table_caption(doc, table, table_index=0)
+    check("confidence == direct", m.confidence == "direct", m.confidence)
+    check("multi_caption == True", m.multi_caption is True)
+    check(
+        "두 캡션 텍스트 모두 병합됨",
+        "지역별 매출 비교" in m.caption_text and "전년 대비 증감률" in m.caption_text,
+        m.caption_text,
+    )
+    check(
+        "caption_ref에 두 ref 모두 포함",
+        "#/texts/0" in m.caption_ref and "#/texts/1" in m.caption_ref,
+        m.caption_ref,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 케이스 3a: 캡션이 이전 페이지 맨 아래에 있는 경우
+# ---------------------------------------------------------------------------
+
+def test_caption_on_previous_page():
+    section("케이스 3a: 캡션이 이전 페이지에 있는 경우 (표가 페이지 최상단에서 시작)")
+
+    texts = [
+        # 이전 페이지(1페이지) 맨 아래 두 줄 중 캡션 패턴에 맞는 것
+        FakeItem("text", "본문 마지막 문단입니다.", page_no=1, t=100, b=90),
+        FakeItem("caption", "Table 2: 국가별 GDP 성장률 추이", page_no=1, t=80, b=70),
+        # 같은 페이지(2페이지)엔 캡션 패턴 텍스트 없음
+        FakeItem("text", "표 아래 설명 텍스트", page_no=2, t=390, b=380),
+    ]
+    # 페이지 높이 800 기준, 표가 상위 15%(>=680) 안쪽에서 시작 -> 인접 페이지 탐색 게이트 통과
+    doc = FakeDoc(texts=texts, page_height=800.0)
+    # 같은 페이지 bbox fallback(200pt 이내)이 실패하도록 표 아래 텍스트와 충분히 멀리 둠
+    table = FakeTable(page_no=2, t=750, b=400, captions=[])
+
+    m = map_table_caption(doc, table, table_index=1)
+    check("confidence == inferred", m.confidence == "inferred", m.confidence)
+    check("cross_page == True", m.cross_page is True)
+    check(
+        "이전 페이지 캡션 텍스트 채택",
+        m.caption_text == "Table 2: 국가별 GDP 성장률 추이",
+        str(m.caption_text),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 케이스 3b: 캡션이 다음 페이지 맨 위에 있는 경우
+# ---------------------------------------------------------------------------
+
+def test_caption_on_next_page():
+    section("케이스 3b: 캡션이 다음 페이지에 있는 경우 (표가 페이지 최하단에서 끝남)")
+
+    texts = [
+        # 3페이지 맨 위에 캡션
+        FakeItem("caption", "Figure 3: 손실 함수 수렴 곡선", page_no=3, t=750, b=740),
+        FakeItem("text", "본문 이어지는 내용", page_no=3, t=700, b=690),
+    ]
+    # 페이지 높이 800 기준, 표가 하위 15%(<=120) 안쪽에서 끝남 -> 게이트 통과
+    doc = FakeDoc(texts=texts, page_height=800.0)
+    # 표가 2페이지 맨 아래(b=50)에서 끝남 -> 같은 페이지 bbox fallback 실패해야 함
+    table = FakeTable(page_no=2, t=200, b=50, captions=[])
+
+    m = map_table_caption(doc, table, table_index=2)
+    check("confidence == inferred", m.confidence == "inferred", m.confidence)
+    check("cross_page == True", m.cross_page is True)
+    check(
+        "다음 페이지 캡션 텍스트 채택",
+        m.caption_text == "Figure 3: 손실 함수 수렴 곡선",
+        str(m.caption_text),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 케이스 3c (회귀 방지): 표가 페이지 경계 근처가 아니면 인접 페이지를 보지 않아야 함
+# ---------------------------------------------------------------------------
+
+def test_middle_of_page_ignores_adjacent_caption():
+    section("케이스 3c: 표가 페이지 중간에 있으면 옆 페이지의 무관한 캡션을 붙이면 안 됨")
+    # 실제 버그 사례: GPT-3 논문에서 목차(ToC)가 표로 오인식된 케이스.
+    # 표가 페이지 중간~전체를 차지하는데, 다음 페이지에 있는 완전히 무관한
+    # "Figure 1.1" 캡션을 게이팅 없이는 잘못 채택했었음.
+
+    texts = [
+        FakeItem("caption", "Figure 9: 무관한 그림 설명", page_no=3, t=750, b=740),
+    ]
+    doc = FakeDoc(texts=texts, page_height=800.0)
+    # 표가 페이지 중간을 차지(위/아래 15% 경계 밖) -> 인접 페이지 탐색 자체가 게이팅돼야 함
+    table = FakeTable(page_no=2, t=600, b=200, captions=[])
+
+    m = map_table_caption(doc, table, table_index=3)
+    check("confidence == none (무관 캡션 채택 안 함)", m.confidence == "none", m.confidence)
+    check("caption_text is None", m.caption_text is None, str(m.caption_text))
+    check("cross_page == False", m.cross_page is False)
+
+
+def main():
+    test_no_caption()
+    test_multi_caption()
+    test_caption_on_previous_page()
+    test_caption_on_next_page()
+    test_middle_of_page_ignores_adjacent_caption()
+
+    section("결과")
+    print(f"  PASS {PASS} / FAIL {FAIL}")
+    if FAIL:
+        sys.exit(1)
+    print("\n[DONE] 08_caption_exception_tests.py complete")
+
+
+if __name__ == "__main__":
+    main()
