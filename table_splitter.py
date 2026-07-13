@@ -208,6 +208,7 @@ def split_eu(
                 EvidenceUnit(
                     eu_id=f"{eu.eu_id}-s{split_idx}",
                     page_no=eu.page_no,
+                    section_header=eu.section_header,
                     caption_text=eu.caption_text,
                     table_html=chunk_html,
                     footnote_text="",
@@ -217,10 +218,12 @@ def split_eu(
                         else []
                     ),
                     context_after=[],
+                    table_abstract=eu.table_abstract,
                     bbox=eu.bbox,
                     is_split=True,
                     split_index=split_idx,
                     total_splits=None,
+                    caption_confidence=eu.caption_confidence,
                 )
 
             )
@@ -243,6 +246,7 @@ def split_eu(
             EvidenceUnit(
                 eu_id=f"{eu.eu_id}-s{split_idx}",
                 page_no=eu.page_no,
+                section_header=eu.section_header,
                 caption_text=eu.caption_text,
                 table_html=chunk_html,
                 footnote_text=eu.footnote_text,
@@ -252,10 +256,12 @@ def split_eu(
                     else []
                 ),
                 context_after=eu.context_after,
+                table_abstract=eu.table_abstract,
                 bbox=eu.bbox,
                 is_split=True,
                 split_index=split_idx,
                 total_splits=None,
+                caption_confidence=eu.caption_confidence,
             )
 
         )

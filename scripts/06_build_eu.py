@@ -3,8 +3,8 @@ STEP 6: EvidenceUnit 실제 구성.
 
 포함 기능:
   - caption_text    : _caption_mapper.map_table_caption() (RefItem 직접 연결 + bbox fallback)
-  - section_header  : 표 위쪽 가장 가까운 섹션 헤더
-  - context_before/after: 같은 페이지 300pt 이내 단락
+  - section_header  : context_attacher.attach_context_paragraphs() (표 위쪽 가장 가까운 섹션 헤더)
+  - context_before/after: context_attacher.attach_context_paragraphs() (bbox 거리 + 임베딩 유사도 필터)
   - table_html      : export_to_html(doc)
   - flattened_rows  : 셀 → 자연어 문장 (Row Flattening, _table_utils)
   - table_abstract  : 표 요약 문자열 (multi-granularity 검색)
@@ -32,8 +32,6 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 PDF_PATH = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
     os.path.dirname(__file__), "..", "data", "pdfs", "attention_is_all_you_need.pdf"
 )
-
-CONTEXT_WINDOW_PT = 300.0  # 표 위아래 300 PDF 포인트 이내를 컨텍스트로 수집
 
 
 def section(title: str) -> None:
@@ -66,90 +64,6 @@ def get_prov(item_dict: dict) -> tuple[int, dict]:
     return p.get("page_no", -1), p.get("bbox", {})
 
 
-def bbox_center_y(bbox: dict) -> float:
-    return (bbox.get("t", 0.0) + bbox.get("b", 0.0)) / 2.0
-
-
-# ---------------------------------------------------------------------------
-# 섹션 헤더 탐색
-# ---------------------------------------------------------------------------
-
-def find_section_header(doc, table_page: int, table_top_y: float) -> str | None:
-    """
-    표 위쪽(읽기 순서 기준 이전)에서 가장 가까운 section_header.
-    BOTTOMLEFT: 시각적으로 표 위 = y 값이 table_top_y보다 큰 헤더.
-    같은 페이지에 없으면 이전 페이지 중 가장 마지막 헤더.
-    """
-    same_above: list[tuple[float, str]] = []
-    prev_pages: list[tuple[int, float, str]] = []
-
-    for item in doc.texts:
-        d = item.model_dump()
-        if d.get("label") != "section_header":
-            continue
-        pg, bbox = get_prov(d)
-        if pg == -1:
-            continue
-        cy = bbox_center_y(bbox)
-        text = d.get("text", "")
-
-        if pg == table_page and cy > table_top_y:
-            same_above.append((cy - table_top_y, text))
-        elif pg < table_page:
-            prev_pages.append((pg, cy, text))
-
-    if same_above:
-        same_above.sort(key=lambda x: x[0])
-        return same_above[0][1]
-
-    if prev_pages:
-        prev_pages.sort(key=lambda x: (x[0], x[1]))
-        return prev_pages[-1][2]
-
-    return None
-
-
-# ---------------------------------------------------------------------------
-# 컨텍스트 단락 탐색
-# ---------------------------------------------------------------------------
-
-def find_context(
-    doc, table_page: int, table_top_y: float, table_bot_y: float
-) -> tuple[list[str], list[str]]:
-    """
-    같은 페이지 CONTEXT_WINDOW_PT 범위 내 text/list_item 단락 수집.
-    before: 표 위쪽 (cy > table_top_y)
-    after:  표 아래쪽 (cy < table_bot_y)
-    """
-    before: list[tuple[float, str]] = []
-    after:  list[tuple[float, str]] = []
-
-    for item in doc.texts:
-        d = item.model_dump()
-        if d.get("label") not in ("text", "list_item", "paragraph"):
-            continue
-        pg, bbox = get_prov(d)
-        if pg != table_page:
-            continue
-        cy = bbox_center_y(bbox)
-        content = d.get("text", "").strip()
-        if not content:
-            continue
-
-        if cy > table_top_y:
-            dist = cy - table_top_y
-            if dist <= CONTEXT_WINDOW_PT:
-                before.append((dist, content))
-        elif cy < table_bot_y:
-            dist = table_bot_y - cy
-            if dist <= CONTEXT_WINDOW_PT:
-                after.append((dist, content))
-
-    before.sort(key=lambda x: x[0])
-    after.sort(key=lambda x: x[0])
-    return [t for _, t in before], [t for _, t in after]
-
-
 # ---------------------------------------------------------------------------
 # EU 빌더
 # ---------------------------------------------------------------------------
@@ -164,6 +78,7 @@ def build_evidence_units(doc) -> list:
         flatten_to_sentences,
         build_table_abstract,
     )
+    from context_attacher import attach_context_paragraphs
 
     page_sizes: dict[int, dict] = {}
     if hasattr(doc, "pages"):
@@ -184,9 +99,6 @@ def build_evidence_units(doc) -> list:
         page_counters[pg] = idx + 1
         eu_id = f"eu-p{pg}-{idx}"
 
-        table_top_y = bbox.get("t", 0.0)
-        table_bot_y = bbox.get("b", 0.0)
-
         # ── 캡션 (RefItem 직접 연결 + bbox fallback, _caption_mapper.py) ──
         cap_mapping = map_table_caption(doc, table, table_index)
         caption_text = cap_mapping.caption_text
@@ -202,29 +114,11 @@ def build_evidence_units(doc) -> list:
             fn_dict = resolve_ref(doc, cref)
             footnote_text = fn_dict.get("text") or None
 
-        # ── 섹션 헤더 ───────────────────────────────────────────────
-        section_hdr = find_section_header(doc, pg, table_top_y)
-
-        # ── 컨텍스트 단락 ────────────────────────────────────────────
-        ctx_before, ctx_after = find_context(doc, pg, table_top_y, table_bot_y)
-
         # ── 표 HTML ─────────────────────────────────────────────────
         try:
             table_html = table.export_to_html(doc) or None
         except Exception:
             table_html = None
-
-        # ── Row Flattening + 다단 헤더 처리 ─────────────────────────
-        data = t_dict.get("data", {})
-        cells = data.get("table_cells", [])
-        num_rows = data.get("num_rows", 0)
-        num_cols = data.get("num_cols", 0)
-
-        flattened = flatten_to_sentences(cells, num_rows, num_cols, footnote_text)
-
-        # ── Table Abstract ───────────────────────────────────────────
-        col_map = build_col_header_map(cells, num_cols)
-        abstract = build_table_abstract(caption_text, col_map, num_rows, section_hdr)
 
         # ── bbox 정규화 ──────────────────────────────────────────────
         ps = page_sizes.get(pg, {})
@@ -233,20 +127,44 @@ def build_evidence_units(doc) -> list:
         eu = EvidenceUnit(
             eu_id=eu_id,
             page_no=pg,
-            section_header=section_hdr,
             caption_text=caption_text,
             table_html=table_html,
             footnote_text=footnote_text,
-            context_before=ctx_before,
-            context_after=ctx_after,
-            flattened_rows=flattened,
-            table_abstract=abstract,
             bbox=norm_bbox,
             caption_confidence=caption_confidence,
         )
+
+        # ── 섹션 헤더 + 인접 단락 (bbox 거리 + 임베딩 유사도, context_attacher.py) ──
+        attach_context_paragraphs(eu, doc)
+
+        # ── Row Flattening + 다단 헤더 처리 ─────────────────────────
+        data = t_dict.get("data", {})
+        cells = data.get("table_cells", [])
+        num_rows = data.get("num_rows", 0)
+        num_cols = data.get("num_cols", 0)
+
+        eu.flattened_rows = flatten_to_sentences(cells, num_rows, num_cols, footnote_text)
+
+        # ── Table Abstract ───────────────────────────────────────────
+        col_map = build_col_header_map(cells, num_cols)
+        eu.table_abstract = build_table_abstract(caption_text, col_map, num_rows, eu.section_header)
+
         eu_list.append(eu)
 
     return eu_list
+
+
+def split_oversized_units(eu_list: list) -> list:
+    """
+    512토큰(DEFAULT_TOKEN_LIMIT) 초과 EU를 table_splitter.split_eu()로 행 단위 분할.
+    한도 이내 EU는 그대로 통과.
+    """
+    from table_splitter import split_eu
+
+    result = []
+    for eu in eu_list:
+        result.extend(split_eu(eu).chunks)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -266,10 +184,16 @@ def main():
     eu_list = build_evidence_units(doc)
     print(f"  총 {len(eu_list)}개 EvidenceUnit 생성\n")
 
+    section("토큰 한도 분할 (table_splitter)")
+    eu_list = split_oversized_units(eu_list)
+    n_split = sum(1 for eu in eu_list if eu.is_split)
+    print(f"  분할 후 총 {len(eu_list)}개 EvidenceUnit ({n_split}개는 분할 조각)\n")
+
     conf_tags = {"direct": "[DIRECT]", "inferred": "[INFER] ", "none": "[NONE]  "}
     for eu in eu_list:
         conf_tag = conf_tags[eu.caption_confidence]
-        print(f"  {conf_tag} [{eu.eu_id}] p{eu.page_no}")
+        split_tag = f" (split {eu.split_index}/{eu.total_splits})" if eu.is_split else ""
+        print(f"  {conf_tag} [{eu.eu_id}] p{eu.page_no}{split_tag}")
         print(f"    section_header  : {(eu.section_header or 'None')[:60]}")
         print(f"    caption_text    : {(eu.caption_text or 'None')[:60]}")
         print(f"    table_abstract  : {(eu.table_abstract or 'None')[:80]}")
@@ -310,6 +234,9 @@ def main():
             "context_after": eu.context_after,
             "bbox": list(eu.bbox),
             "text_length": len(eu.text),
+            "is_split": eu.is_split,
+            "split_index": eu.split_index,
+            "total_splits": eu.total_splits,
         })
 
     out_path = os.path.join(OUTPUT_DIR, f"{pdf_name}_evidence_units.json")
