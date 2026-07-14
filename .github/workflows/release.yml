@@ -94,6 +94,14 @@ jobs:
             dist/*.tar.gz
             dist/*.whl
 
+      # sigstore 서명 결과(.sigstore.json)가 dist/에 같이 생기는데, 그대로 두면
+      # PyPI 업로드 단계가 이 파일도 배포 패키지인 줄 알고 올리려다 실패함.
+      # 업로드 대상이 아니므로 별도 폴더로 분리.
+      - name: 서명 파일을 dist/에서 분리
+        run: |
+          mkdir -p signatures
+          mv dist/*.sigstore.json signatures/
+
       # v0.1 연습 배포: TestPyPI. 실제 pypi.org로 옮길 땐 repository-url 줄만 지우면 됨.
       - name: TestPyPI에 배포 (Trusted Publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -106,4 +114,4 @@ jobs:
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" sbom.json dist/*.sigstore.json --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" sbom.json signatures/*.sigstore.json --clobber
