@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docling-evidence-chunker"
+version = "0.1.0"
+description = "Docling 기반 Evidence Unit(표+캡션+컨텍스트) 청킹 - RAG 검색 성능 향상"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "osscontest" },
+]
+
+dependencies = [
+    "docling>=2.0.0",
+    "tiktoken>=0.7.0",
+]
+
+[project.optional-dependencies]
+langchain = ["langchain-core"]
+
+[project.urls]
+Repository = "https://github.com/osscontest/docling-evidence-chunker"
+
+# 기존 root-level 모듈 구조를 그대로 유지 (scripts/ 는 탐색용 PoC라 패키징 대상 아님)
+[tool.setuptools]
+py-modules = [
+    "interfaces",
+    "bbox_utils",
+    "context_attacher",
+    "langchain_wrapper",
+    "token_counter",
+]
