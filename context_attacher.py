@@ -20,9 +20,10 @@ if TYPE_CHECKING:
 # 상수
 # ---------------------------------------------------------------------------
 
-CONTEXT_WINDOW_PT = 300.0  # 표 위아래 300 PDF 포인트 이내
+CONTEXT_WINDOW_PT = 300.0   # 표 위아래 300 PDF 포인트 이내
 CONTEXT_LABELS = {"text", "list_item", "paragraph"}
-COLUMN_OVERLAP_TOL = 20.0  # 멀티컬럼 컬럼 판별 허용 오차 (pt)
+COLUMN_OVERLAP_TOL = 20.0   # 멀티컬럼 컬럼 판별 허용 오차 (pt)
+ADJACENT_PAGE_EDGE_RATIO = 0.15  # 페이지 상하단 15% 이내일 때 인접 페이지 탐색
 
 
 # ---------------------------------------------------------------------------
@@ -36,6 +37,15 @@ def _get_prov(item_dict: dict) -> tuple[int, dict]:
         return -1, {}
     p = prov_list[0]
     return p.get("page_no", -1), p.get("bbox", {})
+
+
+def _get_page_height(doc, page_no: int) -> float:
+    pages = getattr(doc, "pages", {})
+    pg = pages.get(page_no) if hasattr(pages, "get") else None
+    if pg is None:
+        return 0.0
+    d = pg.model_dump() if hasattr(pg, "model_dump") else {}
+    return (d.get("size") or {}).get("height", 0.0)
 
 
 def _center_y(bbox: dict) -> float:
@@ -141,7 +151,7 @@ def _collect_by_bbox(
     bbox_threshold: float,
 ) -> tuple[list[tuple[float, str]], list[tuple[float, str]]]:
     """
-    같은 페이지에서 bbox 거리 기준 단락 수집.
+    bbox 거리 기준 단락 수집. 같은 페이지 + 인접 페이지 경계 케이스 포함.
     다른 컬럼 단락 및 섹션 경계를 넘는 단락은 제외.
 
     Returns:
@@ -154,36 +164,53 @@ def _collect_by_bbox(
     before: list[tuple[float, str]] = []
     after: list[tuple[float, str]] = []
 
+    # 인접 페이지 탐색 여부 판단
+    page_height = _get_page_height(doc, table_page)
+    check_prev = page_height > 0 and table_top_y >= page_height * (1 - ADJACENT_PAGE_EDGE_RATIO)
+    check_next = page_height > 0 and table_bot_y <= page_height * ADJACENT_PAGE_EDGE_RATIO
+
     for item in doc.texts:
         d = item.model_dump()
         if d.get("label") not in CONTEXT_LABELS:
             continue
         pg, bbox = _get_prov(d)
-        if pg != table_page:
-            continue
         cy = _center_y(bbox)
         text = d.get("text", "").strip()
         if not text:
             continue
 
-        if not _same_column(table_bbox, bbox):
-            continue
+        if pg == table_page:
+            if not _same_column(table_bbox, bbox):
+                continue
 
-        if cy > table_top_y:
-            dist = cy - table_top_y
-            if dist > bbox_threshold:
-                continue
-            if _has_section_boundary(doc, table_page, table_top_y, cy, "above"):
-                continue
-            before.append((dist, text))
+            if cy > table_top_y:
+                dist = cy - table_top_y
+                if dist > bbox_threshold:
+                    continue
+                if _has_section_boundary(doc, table_page, table_top_y, cy, "above"):
+                    continue
+                before.append((dist, text))
 
-        elif cy < table_bot_y:
-            dist = table_bot_y - cy
-            if dist > bbox_threshold:
-                continue
-            if _has_section_boundary(doc, table_page, table_bot_y, cy, "below"):
-                continue
-            after.append((dist, text))
+            elif cy < table_bot_y:
+                dist = table_bot_y - cy
+                if dist > bbox_threshold:
+                    continue
+                if _has_section_boundary(doc, table_page, table_bot_y, cy, "below"):
+                    continue
+                after.append((dist, text))
+
+        # 이전 페이지 하단 단락 (표가 현재 페이지 맨 위 근처일 때)
+        # BOTTOMLEFT: 페이지 하단 = cy 작은 값
+        elif check_prev and pg == table_page - 1:
+            if cy <= bbox_threshold:
+                before.append((cy + 1.0, text))  # cy 작을수록 하단 = 표에 가까움
+
+        # 다음 페이지 상단 단락 (표가 현재 페이지 맨 아래 근처일 때)
+        # BOTTOMLEFT: 페이지 상단 = cy 큰 값
+        elif check_next and pg == table_page + 1:
+            next_page_height = _get_page_height(doc, table_page + 1)
+            if next_page_height > 0 and cy >= next_page_height - bbox_threshold:
+                after.append((next_page_height - cy + 1.0, text))
 
     before.sort(key=lambda x: x[0])
     after.sort(key=lambda x: x[0])
