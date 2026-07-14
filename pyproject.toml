@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "docling-evidence-chunker"
+name = "evidence-chunker"
 version = "0.1.0"
 description = "Docling 기반 Evidence Unit(표+캡션+컨텍스트) 청킹 - RAG 검색 성능 향상"
 readme = "README.md"
