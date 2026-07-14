@@ -1,0 +1,109 @@
+name: Release
+
+# GitHub Release를 published 하면 자동 실행. 배포 파이프라인만 먼저 점검하고
+# 싶으면 Actions 탭에서 수동으로도 실행 가능 (workflow_dispatch).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tool
+        run: pip install build
+
+      - name: sdist + wheel 빌드
+        run: python -m build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  pip-audit:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package + pip-audit
+        run: pip install -e . pip-audit
+
+      - name: pip-audit로 의존성 취약점 스캔
+        run: pip-audit
+
+  sbom:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package + SBOM 생성 도구
+        run: pip install -e . cyclonedx-bom
+
+      - name: CycloneDX SBOM 생성
+        run: cyclonedx-py environment -o sbom.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+
+  sign-and-publish:
+    needs: [build, pip-audit, sbom]
+    runs-on: ubuntu-latest
+    # PyPI/TestPyPI에서 Trusted Publisher를 이 environment 이름으로 연결해야 함
+    environment: testpypi
+    permissions:
+      id-token: write   # Trusted Publishing(OIDC) + Sigstore 서명에 필요
+      contents: write   # GitHub Release에 SBOM/서명 파일 첨부
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: .
+
+      - name: Sigstore로 배포 아티팩트 서명
+        uses: sigstore/gh-action-sigstore-python@v3.0.0
+        with:
+          inputs: |
+            dist/*.tar.gz
+            dist/*.whl
+
+      # v0.1 연습 배포: TestPyPI. 실제 pypi.org로 옮길 땐 repository-url 줄만 지우면 됨.
+      - name: TestPyPI에 배포 (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/
+          skip-existing: true
+
+      - name: SBOM + 서명 파일을 GitHub Release에 첨부
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" sbom.json dist/*.sigstore.json --clobber
