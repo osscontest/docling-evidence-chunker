@@ -75,8 +75,9 @@ def build_evidence_units(doc) -> list:
     from _table_utils import (
         build_col_header_map,
         build_row_header_map,
-        flatten_to_sentences,
         build_table_abstract,
+        find_duplicate_tables,
+        group_sentences_by_row,
     )
     from context_attacher import attach_context_paragraphs
 
@@ -86,10 +87,22 @@ def build_evidence_units(doc) -> list:
             pg_dict = pg_val.model_dump() if hasattr(pg_val, "model_dump") else {}
             page_sizes[int(pg_key)] = pg_dict.get("size", {})
 
+    # ── 중복 표 감지: Docling이 표 1개를 TableItem 2개로 중복 인식하는 경우
+    #    제거되는 쪽(loser)의 캡션이 direct로 잡혀 있으면 남는 쪽(winner)에 물려줌 ──
+    dup_drop_map = find_duplicate_tables(doc)
+    dup_donor_caption = {}
+    for loser_idx, winner_idx in dup_drop_map.items():
+        donor_mapping = map_table_caption(doc, doc.tables[loser_idx], loser_idx)
+        if donor_mapping.caption_text:
+            dup_donor_caption[winner_idx] = donor_mapping
+
     eu_list: list[EvidenceUnit] = []
     page_counters: dict[int, int] = {}
 
     for table_index, table in enumerate(doc.tables):
+        if table_index in dup_drop_map:
+            continue  # 중복 표: 더 세밀하게 구조화된 쪽만 남김
+
         t_dict = table.model_dump()
         pg, bbox = get_prov(t_dict)
         if pg == -1:
@@ -101,6 +114,8 @@ def build_evidence_units(doc) -> list:
 
         # ── 캡션 (RefItem 직접 연결 + bbox fallback, _caption_mapper.py) ──
         cap_mapping = map_table_caption(doc, table, table_index)
+        if cap_mapping.confidence == "none" and table_index in dup_donor_caption:
+            cap_mapping = dup_donor_caption[table_index]
         caption_text = cap_mapping.caption_text
         caption_confidence = cap_mapping.confidence
 
@@ -135,7 +150,9 @@ def build_evidence_units(doc) -> list:
         )
 
         # ── 섹션 헤더 + 인접 단락 (bbox 거리 + 임베딩 유사도, context_attacher.py) ──
-        attach_context_paragraphs(eu, doc)
+        # table_bbox를 직접 넘김: eu_id의 페이지 내 순번은 dedup으로 doc.tables의
+        # 스캔 순서와 어긋날 수 있어, eu_id 기반 재추정에 맡기면 안 됨.
+        attach_context_paragraphs(eu, doc, table_bbox=bbox)
 
         # ── Row Flattening + 다단 헤더 처리 ─────────────────────────
         data = t_dict.get("data", {})
@@ -143,7 +160,10 @@ def build_evidence_units(doc) -> list:
         num_rows = data.get("num_rows", 0)
         num_cols = data.get("num_cols", 0)
 
-        eu.flattened_rows = flatten_to_sentences(cells, num_rows, num_cols, footnote_text)
+        eu.row_sentence_map = group_sentences_by_row(cells, num_rows, num_cols, footnote_text)
+        eu.flattened_rows = [
+            s for row in sorted(eu.row_sentence_map) for s in eu.row_sentence_map[row]
+        ]
 
         # ── Table Abstract ───────────────────────────────────────────
         col_map = build_col_header_map(cells, num_cols)
