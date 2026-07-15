@@ -66,6 +66,15 @@ class EvidenceUnit:
     flattened_rows: list[str] = field(default_factory=list)
 
     # ------------------------------------------------------------------
+    # 행별 자연어 문장 맵 (내부 전용 — table_splitter가 표를 행 단위로
+    # 분할할 때 각 조각에 해당 행의 flattened_rows만 함께 실어 보내기 위한
+    # 빌더 내부 데이터. {원본 표의 row_offset_idx: [문장, ...]}
+    # _table_utils.group_sentences_by_row()로 생성. text/retrieval_*
+    # property에는 관여하지 않음 — flattened_rows만 참조한다.
+    # ------------------------------------------------------------------
+    row_sentence_map: dict[int, list[str]] = field(default_factory=dict, repr=False)
+
+    # ------------------------------------------------------------------
     # 표 단위 요약 (Table Abstract)
     # "이 표가 뭘 담고 있는가"에 답하는 한 줄 요약.
     # 광범위 질의("지역별 매출 표가 어디 있어?")에는 abstract가 더 강하게 반응.
@@ -125,3 +134,82 @@ class EvidenceUnit:
             *self.context_after,
         ]
         return "\n".join(p for p in parts if p)
+
+    # ------------------------------------------------------------------
+    # retrieval_text property (임베딩 검색 전용, 자동 계산)
+    # ------------------------------------------------------------------
+    @property
+    def retrieval_text(self) -> str:
+        """
+        임베딩 기반 검색(코사인 유사도)에 넣을 축약 텍스트.
+
+        all-MiniLM-L6-v2 같은 임베딩 모델은 입력을 256 토큰에서 잘라버린다.
+        text property는 raw table_html(태그로 뒤덮인 마크업, 토큰 낭비가 큼)이
+        flattened_rows(자연어 문장, 실제 검색 신호)보다 앞에 오기 때문에,
+        표가 조금만 커도 truncate 시 flattened_rows 전체가 잘려나가
+        정작 검색에 필요한 내용이 임베딩에 반영되지 않는 문제가 있었다
+        (W4 Recall@1 회귀 0.60 -> 0.40의 핵심 원인).
+
+        table_html은 제외하고, 신호 밀도가 높은 순서로 배치:
+            caption_text -> table_abstract -> section_header
+            -> flattened_rows -> footnote_text -> context_before/after
+        LLM에 넘길 전체 맥락(table_html 포함)이 필요하면 text를 사용할 것.
+        """
+        parts = [
+            self.caption_text,
+            self.table_abstract,
+            self.section_header,
+            *self.flattened_rows,
+            self.footnote_text,
+            *self.context_before,
+            *self.context_after,
+        ]
+        return "\n".join(p for p in parts if p)
+
+    # ------------------------------------------------------------------
+    # retrieval_units property (행 단위 다중 벡터 검색용, 자동 계산)
+    # ------------------------------------------------------------------
+    @property
+    def retrieval_units(self) -> list[str]:
+        """
+        문장 단위 다중 벡터(multi-vector) 검색용 세부 텍스트 목록.
+
+        retrieval_text 하나로 표 전체(모든 행)를 한 벡터에 뭉치면, "표 안의
+        특정 셀 값"을 묻는 질의(예: 13행짜리 표에서 YOLOv5 행 하나)가 나머지
+        행 데이터에 묻혀 코사인 유사도에서 밀리는 문제가 있다. 대신
+        flattened_rows 문장 하나하나를 별도 벡터로 인덱싱하고, 어느 문장이
+        매칭되든 이 EU 전체(caption_text/table_html 포함, eu.text)를
+        반환하는 "small-to-big" 패턴에 쓰기 위한 단위 목록.
+
+        요약 정보(캡션+표 요약+섹션헤더)는 "이 표가 뭘 담고 있는가" 같은
+        광범위 질의용으로 별도 유닛 1개로 묶는다.
+
+        벡터스토어 구성 시: 각 유닛을 임베딩하고 검색 결과의 unit이 어느
+        EU(eu_id)에 속하는지만 기록해뒀다가, 매칭되면 해당 EU의 eu.text를
+        반환하면 된다 (langchain_wrapper.eu_to_langchain_units 참고).
+        """
+        units: list[str] = []
+
+        summary = "\n".join(
+            p for p in (self.caption_text, self.table_abstract, self.section_header) if p
+        )
+        if summary:
+            units.append(summary)
+
+        units.extend(self.flattened_rows)
+
+        if self.footnote_text:
+            units.append(self.footnote_text)
+
+        # context_before/after도 문단 단위로 각각 별도 유닛화. "이 표 위/아래에
+        # 뭐라고 써있는지"를 묻는 질의는 표 데이터가 아니라 이 문단 자체가
+        # 정답이므로, flattened_rows와 뭉쳐서 하나로 임베딩하면 신호가 흐려진다.
+        units.extend(self.context_before)
+        units.extend(self.context_after)
+
+        if not units:
+            fallback = self.retrieval_text
+            if fallback:
+                units.append(fallback)
+
+        return units
