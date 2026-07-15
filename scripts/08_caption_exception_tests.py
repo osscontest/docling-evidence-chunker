@@ -227,12 +227,42 @@ def test_middle_of_page_ignores_adjacent_caption():
     check("cross_page == False", m.cross_page is False)
 
 
+# ---------------------------------------------------------------------------
+# 케이스 3d (회귀 방지): 본문 중간에 번호가 우연히 등장해도 캡션으로 오인하면 안 됨
+# ---------------------------------------------------------------------------
+
+def test_narrative_paragraph_not_mistaken_for_caption():
+    section("케이스 3d: 본문 문단 중간에 'Figure N'이 나와도 캡션으로 오인하면 안 됨")
+    # 실제 버그 사례: GPT-3 논문 부록 표(table[20], p47)에서 captions RefItem이
+    # 비어있어 bbox fallback이 발동했는데, 근처의 서술형 문단
+    # "This appendix contains the calculations ... Figure 2.2. As a simplifying ..."
+    # 전체가 캡션으로 잘못 채택됨 (문단 중간에 "Figure 2.2"가 우연히 있었음).
+
+    texts = [
+        FakeItem(
+            "text",
+            "This appendix contains the calculations that were used to derive "
+            "the approximate compute used to train the language models in "
+            "Figure 2.2. As a simplifying assumption, we ignore the attention "
+            "operation, as it typically uses less than 10% of the total compute.",
+            page_no=5, t=390, b=350,
+        ),
+    ]
+    doc = FakeDoc(texts=texts)
+    table = FakeTable(page_no=5, t=400, b=200, captions=[])
+
+    m = map_table_caption(doc, table, table_index=4)
+    check("confidence == none (서술형 문단을 캡션으로 오인하지 않음)", m.confidence == "none", m.confidence)
+    check("caption_text is None", m.caption_text is None, str(m.caption_text))
+
+
 def main():
     test_no_caption()
     test_multi_caption()
     test_caption_on_previous_page()
     test_caption_on_next_page()
     test_middle_of_page_ignores_adjacent_caption()
+    test_narrative_paragraph_not_mistaken_for_caption()
 
     section("결과")
     print(f"  PASS {PASS} / FAIL {FAIL}")
