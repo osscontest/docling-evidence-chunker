@@ -43,10 +43,19 @@ W4 중간측정 회귀(0.60 -> 0.40) 원인 3건 및 조치:
     선호하는 경향이 있음 — 표 안의 정확한 수치보다, 모델명만 언급하고 실제 값은 없는
     문단을 더 관련 있다고 채점한 사례 확인. 기본값은 OFF, --rerank로 켜서 비교 가능.
 
+남은 miss 대응 시도 — 검색 특화(비대칭 query/passage) 임베딩 모델 교체:
+    all-MiniLM-L6-v2 대신 bge-small-en-v1.5 / e5-small-v2로 교체해봤으나 둘 다
+    이 벤치마크에서는 더 나빴음 (실측: bge 0.40, e5 0.60, all-MiniLM 0.80).
+    두 모델 모두 max_seq_length가 512라 truncation 문제는 없었는데도 밀렸다는 점에서,
+    단순 truncation 회피보다 이 문서(영어 논문, 표 기반 QA)에 대한 모델별 궁합 차이가
+    더 크게 작용한 것으로 보임. 기본값은 all-MiniLM 유지, --embed-model=bge|e5로 비교 가능.
+
 Usage:
-    python measure_recall_eu.py               # split 적용, rerank 미적용 (기본 파이프라인)
-    python measure_recall_eu.py --no-split     # table_splitter 끄고 측정 (ablation)
-    python measure_recall_eu.py --rerank       # cross-encoder 재순위화 켜고 측정 (이 벤치마크에선 손해로 측정됨)
+    python measure_recall_eu.py                      # split 적용, rerank 미적용, all-MiniLM (기본)
+    python measure_recall_eu.py --no-split            # table_splitter 끄고 측정 (ablation)
+    python measure_recall_eu.py --rerank              # cross-encoder 재순위화 켜고 측정 (이 벤치마크에선 손해로 측정됨)
+    python measure_recall_eu.py --embed-model=bge     # BAAI/bge-small-en-v1.5로 측정
+    python measure_recall_eu.py --embed-model=e5      # intfloat/e5-small-v2로 측정
 """
 import sys
 import os
@@ -64,6 +73,32 @@ PDF_PATH = os.path.join(os.path.dirname(__file__), "data", "pdfs", "docling_tech
 APPLY_SPLIT = "--no-split" not in sys.argv
 APPLY_RERANK = "--rerank" in sys.argv  # 기본 OFF — 이 벤치마크에서 Recall@1 0.80->0.60 손해로 측정됨
 RERANK_TOP_K = 8
+
+# 검색 특화(비대칭 query/passage) 임베딩 모델 후보.
+# all-MiniLM-L6-v2는 범용 문장 유사도용이라 질문<->문서 비대칭 매칭에 약함 —
+# bge/e5는 query/passage를 다르게 인코딩하도록 프리픽스로 학습돼 있어 근소한
+# 점수 차이로 밀리던 케이스를 뒤집을 가능성이 있음.
+EMBED_MODELS = {
+    "minilm": {
+        "name": "sentence-transformers/all-MiniLM-L6-v2",
+        "query_prefix": "",
+        "passage_prefix": "",
+    },
+    "bge": {
+        "name": "BAAI/bge-small-en-v1.5",
+        "query_prefix": "Represent this sentence for searching relevant passages: ",
+        "passage_prefix": "",
+    },
+    "e5": {
+        "name": "intfloat/e5-small-v2",
+        "query_prefix": "query: ",
+        "passage_prefix": "passage: ",
+    },
+}
+EMBED_MODEL_KEY = "minilm"
+for _arg in sys.argv:
+    if _arg.startswith("--embed-model="):
+        EMBED_MODEL_KEY = _arg.split("=", 1)[1]
 
 
 def section(title: str) -> None:
@@ -164,8 +199,11 @@ def main():
     #    corpus_display(부모 EU의 eu.text, 전체) 사용.
     # ------------------------------------------------------------------
     section("Recall@1 측정")
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    corpus_embeddings = model.encode(corpus_embed_texts, normalize_embeddings=True)
+    embed_cfg = EMBED_MODELS[EMBED_MODEL_KEY]
+    print(f"  임베딩 모델: {embed_cfg['name']}")
+    model = SentenceTransformer(embed_cfg["name"])
+    passage_texts = [embed_cfg["passage_prefix"] + t for t in corpus_embed_texts]
+    corpus_embeddings = model.encode(passage_texts, normalize_embeddings=True)
 
     reranker = None
     if APPLY_RERANK:
@@ -206,7 +244,7 @@ def main():
 
     hits = 0
     for qa in qa_set:
-        q_emb = model.encode(qa["question"], normalize_embeddings=True)
+        q_emb = model.encode(embed_cfg["query_prefix"] + qa["question"], normalize_embeddings=True)
         scores = np.dot(corpus_embeddings, q_emb)
 
         # bi-encoder 1차 순위
@@ -252,7 +290,8 @@ def main():
     recall_at_1 = hits / len(qa_set)
     mode = "split ON" if APPLY_SPLIT else "split OFF"
     rerank_mode = "rerank ON" if APPLY_RERANK else "rerank OFF"
-    print(f"=== EU 통합 파이프라인 ({mode}, {rerank_mode}) Recall@1: {recall_at_1:.2f} ({hits}/{len(qa_set)}) ===")
+    print(f"=== EU 통합 파이프라인 ({mode}, {rerank_mode}, embed={EMBED_MODEL_KEY}) "
+          f"Recall@1: {recall_at_1:.2f} ({hits}/{len(qa_set)}) ===")
 
 
 if __name__ == "__main__":
