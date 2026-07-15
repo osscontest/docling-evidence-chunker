@@ -45,8 +45,11 @@ CAPTION_SEARCH_PT = 200.0
 _CANDIDATE_LABELS = {"caption", "section_header", "text"}
 
 # "Table 1", "Figure 2", "표1", "<표 3>", "그림 2" 등 번호가 붙은 캡션 패턴.
+# 부록 전용 문자.숫자 번호 체계("Table C.1", "Figure G.4")도 포함 — GPT-3 논문
+# 부록에서 실제로 이 형식을 쓰는데 인식을 못 해 캡션 있는 표 35개가 전부
+# "none"으로 빠지는 문제가 있었음 (숫자 앞 문자 하나를 허용하지 않았던 게 원인).
 # 실제 버그 사례("(단위: 1), %)" 같은 파편)를 걸러내는 핵심 필터.
-_CAPTION_PATTERN = re.compile(r"(table|figure|fig|표|그림)\s*\.?\s*\d+", re.IGNORECASE)
+_CAPTION_PATTERN = re.compile(r"(table|figure|fig|표|그림)\s*\.?\s*[A-Z]?\.?\s*\d+", re.IGNORECASE)
 _MIN_CAPTION_LEN = 8
 
 # 인접 페이지 캡션 탐색을 허용할 "페이지 경계 근처" 범위 (페이지 높이 대비 비율).
