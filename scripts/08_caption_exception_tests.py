@@ -256,6 +256,36 @@ def test_narrative_paragraph_not_mistaken_for_caption():
     check("caption_text is None", m.caption_text is None, str(m.caption_text))
 
 
+# ---------------------------------------------------------------------------
+# 케이스 3e: 부록 전용 문자.숫자 캡션 번호 체계 ("Table C.1", "Figure G.4")
+# ---------------------------------------------------------------------------
+
+def test_appendix_letter_number_caption():
+    section("케이스 3e: 부록 캡션 번호 체계 (Table C.1, Figure G.4) 인식")
+    # 실제 버그 사례: GPT-3 논문 부록(45~63p, 표 35개)이 전부 이 형식을 쓰는데,
+    # 숫자 앞 문자 하나를 정규식이 허용하지 않아 전부 "none"으로 빠졌었음.
+    # table[18]은 심지어 captions RefItem까지 정확히 있었는데도 놓쳤던 케이스.
+
+    texts = [
+        FakeItem(
+            "caption",
+            "Table C.1: Overlap statistics for all datasets sorted from dirtiest to cleanest.",
+            page_no=45, t=650, b=630,
+        ),
+    ]
+    doc = FakeDoc(texts=texts)
+    captions = [{"cref": "#/texts/0"}]
+    table = FakeTable(page_no=45, t=620, b=400, captions=captions)
+
+    m = map_table_caption(doc, table, table_index=0)
+    check("confidence == direct", m.confidence == "direct", m.confidence)
+    check(
+        "Table C.1 캡션 텍스트 채택",
+        m.caption_text == "Table C.1: Overlap statistics for all datasets sorted from dirtiest to cleanest.",
+        str(m.caption_text),
+    )
+
+
 def main():
     test_no_caption()
     test_multi_caption()
@@ -263,6 +293,7 @@ def main():
     test_caption_on_next_page()
     test_middle_of_page_ignores_adjacent_caption()
     test_narrative_paragraph_not_mistaken_for_caption()
+    test_appendix_letter_number_caption()
 
     section("결과")
     print(f"  PASS {PASS} / FAIL {FAIL}")
