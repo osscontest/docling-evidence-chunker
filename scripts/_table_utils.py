@@ -10,10 +10,13 @@ _table_utils.py
   - flatten_to_sentences  : 셀 → "행헤더의 열헤더는 값이다." 자연어 문장 (임베딩용)
   - detect_cell_marker    : 셀 내 각주 마커(*†‡) 감지
   - build_table_abstract  : 표 전체 요약 문자열 (multi-granularity 검색용)
+  - find_duplicate_tables : Docling이 표 1개를 TableItem 2개로 중복 감지하는
+                            케이스 탐지 (W4 Recall@1 회귀 원인 중 하나)
 """
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from typing import Optional
 
 # 각주 마커 패턴 (유니코드 포함)
@@ -134,30 +137,26 @@ def detect_cell_marker(text: str) -> tuple[str, Optional[str]]:
 # 5. 행 플래트닝 (핵심)
 # ---------------------------------------------------------------------------
 
-def flatten_to_sentences(
+def group_sentences_by_row(
     cells: list[dict],
     num_rows: int,
     num_cols: int,
     footnote_text: Optional[str] = None,
-) -> list[str]:
+) -> dict[int, list[str]]:
     """
-    표 셀 데이터를 자연어 문장 목록으로 변환.
+    표 셀 데이터를 자연어 문장으로 변환하되, 원본 표의 행 인덱스
+    (start_row_offset_idx)별로 묶어서 반환.
 
-    처리 순서:
-      1. 열헤더 맵 구성 (다단/col_span 처리)
-      2. 행헤더 맵 구성 (row_span 처리)
-      3. 헤더 태깅 없으면 폴백 추론
-      4. 데이터 셀마다 문장 생성
-      5. 각주 마커 있는 셀에 각주 텍스트 추가
+    table_splitter가 표를 행 단위로 분할할 때, 분할된 조각에 해당 행의
+    flattened_rows 문장만 함께 실어 보내기 위해 사용한다. 그렇지 않으면
+    분할된 EU는 자연어 문장 없이 raw table_html만 남아 임베딩 검색 신호를
+    잃는다 (retrieval_units가 표 요약 1개 유닛으로 쪼그라듦).
 
-    생성 포맷:
-      행헤더 있음: "[행헤더]의 [열헤더]는 [값]이다."
-      행헤더 없음: "[열헤더]: [값]"
-      마커 있음:   문장 끝에 "(주: [각주텍스트])" 추가
+    처리 순서 및 문장 포맷은 flatten_to_sentences() 참고.
+
+    Returns:
+        {row_offset_idx: [문장, ...]}  — 헤더 행은 포함되지 않음
     """
-    has_col_headers = any(c.get("column_header") for c in cells)
-    has_row_headers = any(c.get("row_header") for c in cells)
-
     col_map = build_col_header_map(cells, num_cols)
     row_map = build_row_header_map(cells, num_rows)
 
@@ -165,7 +164,7 @@ def flatten_to_sentences(
     if not col_map:
         col_map = infer_headers_fallback(cells, num_cols)
 
-    sentences: list[str] = []
+    grouped: dict[int, list[str]] = defaultdict(list)
 
     for cell in cells:
         # 헤더 셀은 문장화 대상 아님
@@ -198,9 +197,23 @@ def flatten_to_sentences(
         elif marker:
             sentence += f" ({marker}표시)"
 
-        sentences.append(sentence)
+        grouped[row].append(sentence)
 
-    return sentences
+    return dict(grouped)
+
+
+def flatten_to_sentences(
+    cells: list[dict],
+    num_rows: int,
+    num_cols: int,
+    footnote_text: Optional[str] = None,
+) -> list[str]:
+    """
+    표 셀 데이터를 자연어 문장 목록으로 변환 (행 순서대로 이어붙임).
+    행별로 묶인 결과가 필요하면 group_sentences_by_row() 사용.
+    """
+    grouped = group_sentences_by_row(cells, num_rows, num_cols, footnote_text)
+    return [sentence for row in sorted(grouped) for sentence in grouped[row]]
 
 
 # ---------------------------------------------------------------------------
@@ -237,3 +250,80 @@ def build_table_abstract(
         parts.append(f"총 {data_rows}행 데이터.")
 
     return " ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# 7. 중복 표 감지 (W4 Recall@1 회귀 원인 #2)
+# ---------------------------------------------------------------------------
+
+_DUP_TOKEN_RE = re.compile(r"[.,()%]+$")
+
+
+def _cell_text_signature(cells: list[dict]) -> set[str]:
+    """셀 텍스트를 정규화된 토큰 집합으로 변환 (중복 표 비교용)."""
+    tokens: set[str] = set()
+    for cell in cells:
+        text = (cell.get("text") or "").strip()
+        if not text:
+            continue
+        for line in re.split(r"[\n,]+", text):
+            for tok in line.split():
+                tok = _DUP_TOKEN_RE.sub("", tok).lower()
+                if len(tok) >= 2:
+                    tokens.add(tok)
+    return tokens
+
+
+def find_duplicate_tables(doc, overlap_ratio: float = 0.6) -> dict[int, int]:
+    """
+    같은 페이지 내 표 쌍의 셀 텍스트 중복도로 중복 TableItem 감지.
+
+    실사례(docling 기술보고서 8페이지): 같은 물리적 표를 Docling이
+    TableItem 2개로 나눠 인식함 — 하나는 행이 뭉개진 채(1~2행) 캡션
+    RefItem과 연결되어 있고, 다른 하나는 행이 올바르게 분리(예: 13행)됐지만
+    캡션이 없음. 두 표 모두 EU로 만들면 코퍼스가 중복 표 조각으로
+    오염되고, 정작 제대로 구조화된 표는 캡션을 잃는다.
+
+    셀 텍스트 토큰 집합의 포함비율(containment = |교집합| / min(|A|,|B|))이
+    overlap_ratio 이상이면 같은 표로 간주하고, 행 수가 더 많은(더 세밀하게
+    구조화된) 쪽만 남긴다.
+
+    Returns:
+        {제거할 표의 doc.tables 인덱스: 남길 표의 doc.tables 인덱스}
+    """
+    pages: dict[int, list[int]] = defaultdict(list)
+    for i, table in enumerate(doc.tables):
+        d = table.model_dump()
+        prov = d.get("prov", [])
+        if not prov:
+            continue
+        pages[prov[0].get("page_no", -1)].append(i)
+
+    signatures: dict[int, set[str]] = {}
+    row_counts: dict[int, int] = {}
+    for i, table in enumerate(doc.tables):
+        d = table.model_dump()
+        data = d.get("data", {})
+        signatures[i] = _cell_text_signature(data.get("table_cells", []))
+        row_counts[i] = data.get("num_rows", 0)
+
+    drop_map: dict[int, int] = {}
+    for idxs in pages.values():
+        if len(idxs) < 2:
+            continue
+        for a_pos in range(len(idxs)):
+            for b_pos in range(a_pos + 1, len(idxs)):
+                a, b = idxs[a_pos], idxs[b_pos]
+                if a in drop_map or b in drop_map:
+                    continue
+                sig_a, sig_b = signatures[a], signatures[b]
+                if not sig_a or not sig_b:
+                    continue
+                containment = len(sig_a & sig_b) / min(len(sig_a), len(sig_b))
+                if containment >= overlap_ratio:
+                    loser, winner = (
+                        (a, b) if row_counts[a] < row_counts[b] else (b, a)
+                    )
+                    drop_map[loser] = winner
+
+    return drop_map

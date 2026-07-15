@@ -155,13 +155,28 @@ def split_eu(
             total_tokens=total,
         )
 
+    # 헤더가 차지하는 원본 행 개수. row_sentence_map의 키(start_row_offset_idx)는
+    # 헤더 행까지 포함해서 매겨지므로, body_rows의 0-based 위치를 원본 행
+    # 인덱스로 되돌리려면 이 오프셋을 더해야 한다 (단일 헤더 행 가정 —
+    # parse_table()도 동일하게 가정함).
+    header_row_offset = max(1, header_html.count("<tr"))
+
+    def _flattened_for(positions: list[int]) -> list[str]:
+        """분할 조각에 포함된 원본 행들의 flattened_rows 문장만 추출."""
+        return [
+            sentence
+            for pos in positions
+            for sentence in eu.row_sentence_map.get(pos + header_row_offset, [])
+        ]
+
     chunks = []
 
     current_rows = []
+    current_positions: list[int] = []
 
     split_idx = 1
 
-    for row in rows:
+    for pos, row in enumerate(rows):
 
         # 행 하나만으로도 limit 초과하면 요약 권고
 
@@ -195,6 +210,7 @@ def split_eu(
         if token <= limit:
 
             current_rows.append(row)
+            current_positions.append(pos)
 
         else:
 
@@ -218,6 +234,7 @@ def split_eu(
                         else []
                     ),
                     context_after=[],
+                    flattened_rows=_flattened_for(current_positions),
                     table_abstract=eu.table_abstract,
                     bbox=eu.bbox,
                     is_split=True,
@@ -231,6 +248,7 @@ def split_eu(
             split_idx += 1
 
             current_rows = [row]
+            current_positions = [pos]
 
     # 마지막 chunk
 
@@ -256,6 +274,7 @@ def split_eu(
                     else []
                 ),
                 context_after=eu.context_after,
+                flattened_rows=_flattened_for(current_positions),
                 table_abstract=eu.table_abstract,
                 bbox=eu.bbox,
                 is_split=True,

@@ -7,9 +7,15 @@ Usage:
     from smart_chunker import SmartChunker
 
     chunker = SmartChunker()
-    eus = chunker.chunk("paper.pdf")                          # List[EvidenceUnit]
-    docs = chunker.chunk("paper.pdf", output="langchain")     # List[LangChainDocument]
-    nodes = chunker.chunk("paper.pdf", output="llamaindex")   # List[LlamaIndex TextNode]
+    eus = chunker.chunk("paper.pdf")                                # List[EvidenceUnit]
+    docs = chunker.chunk("paper.pdf", output="langchain")           # List[LangChainDocument]
+    nodes = chunker.chunk("paper.pdf", output="llamaindex")         # List[LlamaIndex TextNode]
+
+    # 행 단위 다중 벡터(small-to-big): 표의 특정 셀 값을 묻는 질의에 강함.
+    # 벡터스토어에는 이 작은 Document/Node들을 넣고, 검색 후에는
+    # metadata["parent_text"](표 전체 맥락)를 LLM에 넘길 것.
+    docs = chunker.chunk("paper.pdf", output="langchain_units")     # List[LangChainDocument]
+    nodes = chunker.chunk("paper.pdf", output="llamaindex_units")   # List[LlamaIndex TextNode]
 """
 
 from __future__ import annotations
@@ -57,7 +63,9 @@ class SmartChunker:
     def chunk(
         self,
         pdf_path: str | Path,
-        output: Literal["eu", "langchain", "llamaindex"] = "eu",
+        output: Literal[
+            "eu", "langchain", "llamaindex", "langchain_units", "llamaindex_units"
+        ] = "eu",
     ) -> list:
         """
         PDF를 Evidence Unit으로 청킹.
@@ -65,17 +73,19 @@ class SmartChunker:
         Args:
             pdf_path: PDF 파일 경로
             output:   반환 타입
-                      "eu"         → List[EvidenceUnit]
-                      "langchain"  → List[LangChainDocument]
-                      "llamaindex" → List[LlamaIndex TextNode]
+                      "eu"               → List[EvidenceUnit]
+                      "langchain"        → List[LangChainDocument] (EU 1개 = Document 1개)
+                      "llamaindex"       → List[LlamaIndex TextNode] (EU 1개 = TextNode 1개)
+                      "langchain_units"  → List[LangChainDocument] (EU 1개 = 행 단위 여러 개,
+                                            small-to-big. metadata["parent_text"]가 전체 맥락)
+                      "llamaindex_units" → List[LlamaIndex TextNode] (위와 동일, LlamaIndex용)
 
         Returns:
             output 타입에 맞는 리스트
         """
         pdf_path = str(pdf_path)
         doc = self._parse(pdf_path)
-        eu_list = self._build_eu(doc)
-        eu_list = self._attach_context(eu_list, doc)
+        eu_list = self._build_eu(doc)  # context_attacher까지 이 안에서 처리됨
 
         if output == "langchain":
             from langchain_wrapper import eu_to_langchain
@@ -84,6 +94,14 @@ class SmartChunker:
         if output == "llamaindex":
             from langchain_wrapper import eu_to_llamaindex
             return [eu_to_llamaindex(eu) for eu in eu_list]
+
+        if output == "langchain_units":
+            from langchain_wrapper import eu_to_langchain_units
+            return [doc for eu in eu_list for doc in eu_to_langchain_units(eu)]
+
+        if output == "llamaindex_units":
+            from langchain_wrapper import eu_to_llamaindex_units
+            return [node for eu in eu_list for node in eu_to_llamaindex_units(eu)]
 
         return eu_list
 
@@ -116,11 +134,13 @@ class SmartChunker:
     def _build_eu(self, doc) -> list[EvidenceUnit]:
         """DoclingDocument → List[EvidenceUnit] (context 없는 기본 뼈대)."""
         from bbox_utils import normalize_bbox
+        from context_attacher import attach_context_paragraphs
         from scripts._caption_mapper import map_table_caption
         from scripts._table_utils import (
             build_col_header_map,
-            flatten_to_sentences,
             build_table_abstract,
+            find_duplicate_tables,
+            group_sentences_by_row,
         )
 
         page_sizes: dict[int, dict] = {}
@@ -129,10 +149,21 @@ class SmartChunker:
                 pg_dict = pg_val.model_dump() if hasattr(pg_val, "model_dump") else {}
                 page_sizes[int(pg_key)] = pg_dict.get("size", {})
 
+        # 중복 표 감지 (Docling이 표 1개를 TableItem 2개로 중복 인식하는 경우 대응)
+        dup_drop_map = find_duplicate_tables(doc)
+        dup_donor_caption = {}
+        for loser_idx, winner_idx in dup_drop_map.items():
+            donor_mapping = map_table_caption(doc, doc.tables[loser_idx], loser_idx)
+            if donor_mapping.caption_text:
+                dup_donor_caption[winner_idx] = donor_mapping
+
         eu_list: list[EvidenceUnit] = []
         page_counters: dict[int, int] = {}
 
         for table_index, table in enumerate(doc.tables):
+            if table_index in dup_drop_map:
+                continue  # 중복 표: 더 세밀하게 구조화된 쪽만 남김
+
             t_dict = table.model_dump()
             pg, bbox = self._get_prov(t_dict)
             if pg == -1:
@@ -144,6 +175,8 @@ class SmartChunker:
 
             # 캡션
             cap_mapping = map_table_caption(doc, table, table_index)
+            if cap_mapping.confidence == "none" and table_index in dup_donor_caption:
+                cap_mapping = dup_donor_caption[table_index]
 
             # 각주
             footnote_text = self._resolve_footnote(doc, t_dict)
@@ -159,7 +192,10 @@ class SmartChunker:
             cells = data.get("table_cells", [])
             num_rows = data.get("num_rows", 0)
             num_cols = data.get("num_cols", 0)
-            flattened = flatten_to_sentences(cells, num_rows, num_cols, footnote_text)
+            row_sentence_map = group_sentences_by_row(cells, num_rows, num_cols, footnote_text)
+            flattened = [
+                s for row in sorted(row_sentence_map) for s in row_sentence_map[row]
+            ]
             col_map = build_col_header_map(cells, num_cols)
             abstract = build_table_abstract(cap_mapping.caption_text, col_map, num_rows, None)
 
@@ -178,18 +214,20 @@ class SmartChunker:
                 table_abstract=abstract,
                 bbox=norm_bbox,
             )
+            eu.row_sentence_map = row_sentence_map
+
+            # 섹션 헤더 + 인접 단락 (bbox 거리 + 임베딩 유사도, context_attacher.py).
+            # table_bbox(원본 PDF 포인트 bbox)를 여기서 직접 넘김 — eu_id의
+            # 페이지 내 순번은 dedup으로 doc.tables의 스캔 순서와 어긋날 수
+            # 있어서, attach_context_paragraphs가 eu_id로 재추정하게 두면
+            # 제거된 중복 표의 위치를 잘못 집어올 수 있다.
+            attach_context_paragraphs(
+                eu, doc, self.bbox_threshold, self.sim_threshold, table_bbox=bbox
+            )
+
             eu_list.append(eu)
 
         return eu_list
-
-    def _attach_context(self, eu_list: list[EvidenceUnit], doc) -> list[EvidenceUnit]:
-        """context_attacher로 인접 단락 + 섹션 헤더 채우기."""
-        from context_attacher import attach_context_paragraphs
-
-        return [
-            attach_context_paragraphs(eu, doc, self.bbox_threshold, self.sim_threshold)
-            for eu in eu_list
-        ]
 
     # ------------------------------------------------------------------
     # 헬퍼

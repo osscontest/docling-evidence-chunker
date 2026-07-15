@@ -152,7 +152,15 @@ def _collect_by_bbox(
 ) -> tuple[list[tuple[float, str]], list[tuple[float, str]]]:
     """
     bbox 거리 기준 단락 수집. 같은 페이지 + 인접 페이지 경계 케이스 포함.
-    다른 컬럼 단락 및 섹션 경계를 넘는 단락은 제외.
+    섹션 경계를 넘는 단락은 항상 제외.
+
+    같은 컬럼 단락을 우선하되, 표가 본문 컬럼 그리드에 딱 맞지 않게
+    배치된 경우(넓은 표가 옆으로 살짝 걸치는 등, 실사례: docling 기술
+    보고서 8페이지 — 표와 도입 문단의 x축 간격이 28pt로 COLUMN_OVERLAP_TOL
+    (20pt)을 살짝 넘어서 매칭이 안 됨) 같은 컬럼에서 아무것도 못 찾으면
+    컬럼 제한 없이(같은 페이지 전체에서) 재탐색한다. 이미 section_boundary
+    체크가 다른 섹션 내용이 섞이는 걸 막고 있으므로, 이 폴백을 추가해도
+    무관한 컬럼의 내용을 잘못 끌어올 위험은 낮다.
 
     Returns:
         before: [(거리, 텍스트), ...] — 표 위쪽, 거리 오름차순
@@ -161,13 +169,18 @@ def _collect_by_bbox(
     table_top_y = table_bbox.get("t", 0.0)
     table_bot_y = table_bbox.get("b", 0.0)
 
-    before: list[tuple[float, str]] = []
-    after: list[tuple[float, str]] = []
+    before_same_col: list[tuple[float, str]] = []
+    before_any_col: list[tuple[float, str]] = []
+    after_same_col: list[tuple[float, str]] = []
+    after_any_col: list[tuple[float, str]] = []
 
     # 인접 페이지 탐색 여부 판단
     page_height = _get_page_height(doc, table_page)
     check_prev = page_height > 0 and table_top_y >= page_height * (1 - ADJACENT_PAGE_EDGE_RATIO)
     check_next = page_height > 0 and table_bot_y <= page_height * ADJACENT_PAGE_EDGE_RATIO
+
+    before: list[tuple[float, str]] = []
+    after: list[tuple[float, str]] = []
 
     for item in doc.texts:
         d = item.model_dump()
@@ -180,8 +193,7 @@ def _collect_by_bbox(
             continue
 
         if pg == table_page:
-            if not _same_column(table_bbox, bbox):
-                continue
+            same_col = _same_column(table_bbox, bbox)
 
             if cy > table_top_y:
                 dist = cy - table_top_y
@@ -189,7 +201,7 @@ def _collect_by_bbox(
                     continue
                 if _has_section_boundary(doc, table_page, table_top_y, cy, "above"):
                     continue
-                before.append((dist, text))
+                (before_same_col if same_col else before_any_col).append((dist, text))
 
             elif cy < table_bot_y:
                 dist = table_bot_y - cy
@@ -197,7 +209,7 @@ def _collect_by_bbox(
                     continue
                 if _has_section_boundary(doc, table_page, table_bot_y, cy, "below"):
                     continue
-                after.append((dist, text))
+                (after_same_col if same_col else after_any_col).append((dist, text))
 
         # 이전 페이지 하단 단락 (표가 현재 페이지 맨 위 근처일 때)
         # BOTTOMLEFT: 페이지 하단 = cy 작은 값
@@ -211,6 +223,9 @@ def _collect_by_bbox(
             next_page_height = _get_page_height(doc, table_page + 1)
             if next_page_height > 0 and cy >= next_page_height - bbox_threshold:
                 after.append((next_page_height - cy + 1.0, text))
+
+    before.extend(before_same_col or before_any_col)
+    after.extend(after_same_col or after_any_col)
 
     before.sort(key=lambda x: x[0])
     after.sort(key=lambda x: x[0])
@@ -272,6 +287,7 @@ def attach_context_paragraphs(
     doc,
     bbox_threshold: float = CONTEXT_WINDOW_PT,
     sim_threshold: float = 0.40,
+    table_bbox: dict | None = None,
 ) -> "EvidenceUnit":
     """
     EU에 인접 설명 단락 + 섹션 헤더 추가.
@@ -281,31 +297,46 @@ def attach_context_paragraphs(
         doc:            DoclingDocument
         bbox_threshold: 표 위아래 수집 범위 (PDF 포인트). 기본 300pt
         sim_threshold:  임베딩 유사도 임계값. 기본 0.40
+        table_bbox:     이 EU가 속한 표의 원본(PDF 포인트) bbox. 호출자가
+                         doc.tables를 순회하며 이미 알고 있는 값을 직접
+                         넘겨주는 게 정확하다 — find_duplicate_tables()로
+                         일부 표가 제거되면 eu_id의 페이지 내 순번과
+                         doc.tables의 페이지 내 스캔 순서가 어긋나서,
+                         아래 eu_id 기반 fallback으로는 엉뚱한(제거된
+                         중복 표의) bbox를 집어올 수 있다.
+                         (W4 후속 회귀: 8페이지 표 dedup 후에도
+                         attach_context_paragraphs가 여전히 제거된
+                         중복 표의 위치로 컨텍스트를 찾고 있었음)
+                         None이면 eu_id 기반 추정으로 fallback.
 
     Returns:
         context_before / context_after / section_header 가 채워진 EU
     """
-    # eu_id = "eu-p{page}-{idx}" — 같은 페이지 내 표 순서 (0-based)
-    try:
-        eu_idx = int(eu.eu_id.split("-")[-1])
-    except (ValueError, IndexError):
-        eu_idx = 0
+    if table_bbox is None:
+        # eu_id = "eu-p{page}-{idx}" — 같은 페이지 내 표 순서 (0-based) 추정.
+        # 호출자가 table_bbox를 직접 넘기지 못하는 경우의 fallback이며,
+        # 표 dedup이 있었다면 부정확할 수 있다.
+        try:
+            eu_idx = int(eu.eu_id.split("-")[-1])
+        except (ValueError, IndexError):
+            eu_idx = 0
 
-    page_tables: list[dict] = []
-    for table in doc.tables:
-        d = table.model_dump()
-        prov_list = d.get("prov", [])
-        if not prov_list:
-            continue
-        p = prov_list[0]
-        if p.get("page_no", -1) != eu.page_no:
-            continue
-        page_tables.append(p.get("bbox", {}))
+        page_tables: list[dict] = []
+        for table in doc.tables:
+            d = table.model_dump()
+            prov_list = d.get("prov", [])
+            if not prov_list:
+                continue
+            p = prov_list[0]
+            if p.get("page_no", -1) != eu.page_no:
+                continue
+            page_tables.append(p.get("bbox", {}))
 
-    if eu_idx >= len(page_tables):
-        return eu
+        if eu_idx >= len(page_tables):
+            return eu
 
-    table_bbox = page_tables[eu_idx]
+        table_bbox = page_tables[eu_idx]
+
     table_top_y = table_bbox.get("t", 0.0)
 
     if not table_bbox:
