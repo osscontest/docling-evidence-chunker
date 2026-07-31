@@ -286,6 +286,88 @@ def test_appendix_letter_number_caption():
     )
 
 
+# ---------------------------------------------------------------------------
+# 케이스 3f (3-13): captions RefItem이 그림(Figure) 캡션을 direct로 가리키는 경우
+# ---------------------------------------------------------------------------
+
+def test_direct_ref_pointing_to_figure_caption_is_downgraded():
+    section("케이스 3f: captions RefItem이 그림 캡션을 가리키면 direct로 신뢰하면 안 됨")
+    # 실제 버그 사례: ieee1.pdf에서 표의 captions RefItem이 "Fig. 3. Framework of
+    # ISAC technologies..."를 가리키는데도 confidence="direct"로 확정돼버렸음.
+    # interfaces.py의 EU가 이 잘못된 캡션을 모든 하위 유닛(행/문맥/주석)에 접두사로
+    # 증폭시키면서 Recall -48.5pp 붕괴로 이어졌던 사고(3-11/3-12 참고).
+    #
+    # 수정: direct RefItem 검증은 _looks_like_table_caption(table/표 전용)을 쓴다.
+    # 그림 캡션은 direct로 인정되지 않고 bbox fallback으로 넘어가며, fallback은
+    # 기존 넓은 패턴을 그대로 쓰므로 텍스트 자체는 잃지 않고 confidence만
+    # "direct" -> "inferred"로 정직해진다.
+
+    texts = [
+        FakeItem(
+            "caption",
+            "Fig. 3. Framework of ISAC technologies for future wireless systems.",
+            page_no=1, t=420, b=410,
+        ),
+    ]
+    doc = FakeDoc(texts=texts)
+    captions = [{"cref": "#/texts/0"}]
+    table = FakeTable(page_no=1, t=400, b=200, captions=captions)
+
+    m = map_table_caption(doc, table, table_index=0)
+    check(
+        "confidence == inferred (direct로 잘못 신뢰하지 않음)",
+        m.confidence == "inferred", m.confidence,
+    )
+    check(
+        "caption_text는 bbox fallback으로 보존됨 (정보 손실 없음)",
+        m.caption_text == "Fig. 3. Framework of ISAC technologies for future wireless systems.",
+        str(m.caption_text),
+    )
+    check("caption_ref is None (direct 경로가 아니므로)", m.caption_ref is None, str(m.caption_ref))
+
+
+def test_direct_ref_to_real_table_caption_unaffected():
+    section("케이스 3g (회귀 방지): 정상 표 캡션은 3-13 이후에도 direct 유지")
+
+    texts = [
+        FakeItem("caption", "Table 5: 정상 표 캡션입니다.", page_no=1, t=420, b=410),
+    ]
+    doc = FakeDoc(texts=texts)
+    captions = [{"cref": "#/texts/0"}]
+    table = FakeTable(page_no=1, t=400, b=200, captions=captions)
+
+    m = map_table_caption(doc, table, table_index=0)
+    check("confidence == direct", m.confidence == "direct", m.confidence)
+    check(
+        "caption_text 그대로 채택",
+        m.caption_text == "Table 5: 정상 표 캡션입니다.",
+        str(m.caption_text),
+    )
+
+
+def test_multi_caption_excludes_figure_fragment():
+    section("케이스 3h (3-13 부수 효과): 복수 캡션 중 그림 캡션 파편은 병합에서 제외")
+    # 3-13 이전에는 "Table 7: 진짜 표 캡션" + "Fig 7a. 잘못 섞여 들어온 그림 참조"가
+    # 둘 다 캡션처럼 보여서 caption_text에 함께 병합됐을 것. 이제는 표 패턴만 인정.
+
+    texts = [
+        FakeItem("caption", "Table 7: 진짜 표 캡션", page_no=1, t=420, b=410),
+        FakeItem("caption", "Fig 7a. 잘못 섞여 들어온 그림 참조", page_no=1, t=410, b=400),
+    ]
+    doc = FakeDoc(texts=texts)
+    captions = [{"cref": "#/texts/0"}, {"cref": "#/texts/1"}]
+    table = FakeTable(page_no=1, t=400, b=200, captions=captions)
+
+    m = map_table_caption(doc, table, table_index=0)
+    check("confidence == direct", m.confidence == "direct", m.confidence)
+    check(
+        "그림 캡션 파편 없이 표 캡션만 채택",
+        m.caption_text == "Table 7: 진짜 표 캡션",
+        str(m.caption_text),
+    )
+    check("multi_caption == True (RefItem 자체는 2개였으므로)", m.multi_caption is True)
+
+
 def main():
     test_no_caption()
     test_multi_caption()
@@ -294,6 +376,9 @@ def main():
     test_middle_of_page_ignores_adjacent_caption()
     test_narrative_paragraph_not_mistaken_for_caption()
     test_appendix_letter_number_caption()
+    test_direct_ref_pointing_to_figure_caption_is_downgraded()
+    test_direct_ref_to_real_table_caption_unaffected()
+    test_multi_caption_excludes_figure_fragment()
 
     section("결과")
     print(f"  PASS {PASS} / FAIL {FAIL}")
