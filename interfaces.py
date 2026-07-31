@@ -7,7 +7,7 @@ interfaces.py
     표          → EU로 변환
     텍스트/그림 → Docling HybridChunker
 
-26.07.06 기준
+26.08.01 기준
 """
 
 from __future__ import annotations
@@ -108,26 +108,77 @@ class EvidenceUnit:
     caption_confidence: Literal["direct", "inferred", "none"] = "none"
 
     # ------------------------------------------------------------------
+    # [3-11] 그림(Fig) 캡션 오탐 방어용 헬퍼 프로퍼티
+    # ------------------------------------------------------------------
+    # caption_confidence(direct/inferred)로는 못 걸러낸다 — ieee1.pdf 실측에서
+    # Docling이 "direct"로도 그림 캡션을 표에 구조적으로 잘못 연결하는
+    # 케이스가 확인됨 (eu-p21-0-s1). confidence(출처)가 아니라 캡션
+    # 텍스트 자체의 패턴(의미)으로 걸러야 안전하다.
+    @property
+    def safe_caption(self) -> str | None:
+        """캡션이 Fig/Figure/그림으로 시작하면 표 정체성으로 신뢰하지 않고 None."""
+        if not self.caption_text:
+            return None
+        lower_cap = self.caption_text.strip().lower()
+        if lower_cap.startswith(("fig", "figure", "그림")):
+            return None
+        return self.caption_text
+
+    @property
+    def safe_abstract(self) -> str | None:
+        """table_abstract는 caption_text로 조립되므로, 캡션이 오염됐다면 같이 제거."""
+        if not self.table_abstract:
+            return None
+        if self.caption_text and not self.safe_caption:
+            return self.table_abstract.replace(self.caption_text, "").strip()
+        return self.table_abstract
+
+    # ------------------------------------------------------------------
+    # [3-12] 강등된(Downgrade) 그림 캡션을 문맥으로 복구하는 헬퍼
+    # ------------------------------------------------------------------
+    # safe_caption이 캡션 자격을 박탈(None)하면 표 정체성 오염(3-11에서 막은
+    # prefix 증폭)은 재발하지 않지만, 캡션 안에 들어있던 진짜 유효한 키워드
+    # (예: "NWPU-RESISC45")까지 통째로 사라지는 부작용이 ieee5.pdf 실측에서
+    # 확인됨. 대신 이 텍스트를 "표의 정체성"이 아니라 "표 주변의 평범한
+    # 문맥 단락 1개"로 강등시켜 context_before에 편입한다 — prefix로 모든
+    # 하위 유닛에 반복 주입되지 않고, 독립된 유닛 1개로만 존재하므로 ieee1
+    # 같은 무관 캡션이 다시 표 전체를 오염시킬 위험은 없다.
+    @property
+    def context_before_with_fallback(self) -> list[str]:
+        """context_before + safe_caption에서 탈락한 그림 캡션(문맥으로 강등, 맨 앞 삽입)."""
+        fallback = list(self.context_before)
+        if self.caption_text and not self.safe_caption:
+            # 캡션 자격은 잃었지만 주변 텍스트로서의 가치는 있으므로 문맥으로 강등.
+            # 3-2의 positional bias 대응 설계(캡션/context_before를 맨 앞에 배치)를
+            # 따라 리스트 맨 앞에 삽입한다.
+            fallback.insert(0, self.caption_text)
+        return fallback
+
+    # ------------------------------------------------------------------
     # text property (자동 계산되므로 값을 넣지 말 것)
     # ------------------------------------------------------------------
     @property
     def text(self) -> str:
         """
-        조립 순서:
+        [3-2] 조립 순서 (positional bias 대응):
+            caption_text      ← 표의 정체성 (Table 3: 매출...)
+            context_before    ← 표를 설명하는 핵심 문맥
+            table_abstract    ← 표 요약
             section_header
-            context_before
-            caption_text
-            table_abstract    ← 표 요약 (광범위 질의용)
-            table_html        ← 표 구조
-            flattened_rows    ← 셀별 자연어 문장 (구체 질의용)
+            table_html        ← 표 구조 원본 (LLM 컨텍스트용)
+            flattened_rows    ← 셀별 자연어 문장
             footnote_text
             context_after
+
+        임베딩 모델(all-MiniLM-L6-v2 등)이 앞부분 토큰에 더 크게 반응하는
+        경향(positional bias)을 감안해, 표의 정체성(caption)과 이를
+        설명하는 핵심 문맥(context_before)을 맨 앞에 배치한다.
         """
         parts = [
+            self.safe_caption,
+            *self.context_before_with_fallback,
+            self.safe_abstract,
             self.section_header,
-            *self.context_before,
-            self.caption_text,
-            self.table_abstract,
             self.table_html,
             *self.flattened_rows,
             self.footnote_text,
@@ -144,24 +195,22 @@ class EvidenceUnit:
         임베딩 기반 검색(코사인 유사도)에 넣을 축약 텍스트.
 
         all-MiniLM-L6-v2 같은 임베딩 모델은 입력을 256 토큰에서 잘라버린다.
-        text property는 raw table_html(태그로 뒤덮인 마크업, 토큰 낭비가 큼)이
-        flattened_rows(자연어 문장, 실제 검색 신호)보다 앞에 오기 때문에,
-        표가 조금만 커도 truncate 시 flattened_rows 전체가 잘려나가
-        정작 검색에 필요한 내용이 임베딩에 반영되지 않는 문제가 있었다
-        (W4 Recall@1 회귀 0.60 -> 0.40의 핵심 원인).
+        (W4 Recall@1 회귀 0.60 -> 0.40의 핵심 원인이었음.)
 
-        table_html은 제외하고, 신호 밀도가 높은 순서로 배치:
-            caption_text -> table_abstract -> section_header
-            -> flattened_rows -> footnote_text -> context_before/after
+        table_html은 제외하고, [3-2] 신호 밀도 + positional bias를 함께
+        고려한 순서로 배치:
+            caption_text -> context_before -> table_abstract
+            -> section_header -> flattened_rows -> footnote_text
+            -> context_after
         LLM에 넘길 전체 맥락(table_html 포함)이 필요하면 text를 사용할 것.
         """
         parts = [
-            self.caption_text,
-            self.table_abstract,
+            self.safe_caption,
+            *self.context_before_with_fallback,
+            self.safe_abstract,
             self.section_header,
             *self.flattened_rows,
             self.footnote_text,
-            *self.context_before,
             *self.context_after,
         ]
         return "\n".join(p for p in parts if p)
@@ -181,8 +230,23 @@ class EvidenceUnit:
         매칭되든 이 EU 전체(caption_text/table_html 포함, eu.text)를
         반환하는 "small-to-big" 패턴에 쓰기 위한 단위 목록.
 
+        [3-2] Symmetric Contextual Chunking:
+        context_dependent 유형에서 EU가 hybrid 청크에 지는 현상(3-4에서
+        확인, 3-1 dedup 적용 후에도 갭 -9.9pp 잔존)의 원인으로 지목된
+        부분. flattened_rows/footnote_text/context_before/context_after가
+        전부 캡션 없이 순수 텍스트로만 떠 있어서, 벡터 공간에서 "이게 어느
+        표 얘기인지" 정체성을 잃는 문제가 있었다.
+
+        해결: 각 하위 유닛의 독립성(문단/문장 단위로 별도 벡터화)은 그대로
+        유지하면서, 모든 하위 유닛 앞에 캡션을 접두사로 주입해 표 정체성을
+        앵커링한다(Anthropic Contextual Retrieval과 동일 패턴).
+        context_before/context_after 모두 대칭적으로 동일 처리한다 — 한쪽만
+        summary에 흡수시키는 안은 그 문단 자체가 정답인 질문에서 손해를 볼
+        수 있어 리뷰 과정에서 폐기하고, 독립 유닛 + prefix 방식으로 확정.
+
         요약 정보(캡션+표 요약+섹션헤더)는 "이 표가 뭘 담고 있는가" 같은
-        광범위 질의용으로 별도 유닛 1개로 묶는다.
+        광범위 질의용으로 별도 유닛 1개로 묶는다 (prefix 없음 — 캡션이
+        이미 본문에 포함돼 있음).
 
         벡터스토어 구성 시: 각 유닛을 임베딩하고 검색 결과의 unit이 어느
         EU(eu_id)에 속하는지만 기록해뒀다가, 매칭되면 해당 EU의 eu.text를
@@ -190,22 +254,32 @@ class EvidenceUnit:
         """
         units: list[str] = []
 
+        # 1. 요약 유닛: "이 표가 뭘 담고 있는가" 같은 광범위 질의용
         summary = "\n".join(
-            p for p in (self.caption_text, self.table_abstract, self.section_header) if p
+            p for p in (self.safe_caption, self.safe_abstract, self.section_header) if p
         )
         if summary:
             units.append(summary)
 
-        units.extend(self.flattened_rows)
+        # 2. 하위 유닛 전부에 캡션 접두사 주입 (표 정체성 앵커링).
+        # safe_caption이 없으면(캡션 없음, 또는 Fig/Figure/그림으로 시작하는
+        # 오탐 캡션이라 걸러짐) prefix는 빈 문자열 — "[None] "이나 잘못된
+        # 그림 캡션이 모든 하위 유닛에 증폭되는 것(3-11) 둘 다 방지.
+        prefix = f"[{self.safe_caption}] " if self.safe_caption else ""
+
+        # context_before: 독립 유닛 유지 + 대칭적 앵커링
+        # [3-12] safe_caption에서 탈락한 그림 캡션이 있으면 여기 맨 앞에
+        # 문맥 유닛 1개로 포함됨(prefix 없이) — 표 전체 오염 없이 키워드만 복구.
+        units.extend(f"{prefix}{para}" for para in self.context_before_with_fallback)
+
+        # 개별 행(Row): 어느 표의 데이터인지 캡션으로 명시
+        units.extend(f"{prefix}{row}" for row in self.flattened_rows)
 
         if self.footnote_text:
-            units.append(self.footnote_text)
+            units.append(f"{prefix}{self.footnote_text}")
 
-        # context_before/after도 문단 단위로 각각 별도 유닛화. "이 표 위/아래에
-        # 뭐라고 써있는지"를 묻는 질의는 표 데이터가 아니라 이 문단 자체가
-        # 정답이므로, flattened_rows와 뭉쳐서 하나로 임베딩하면 신호가 흐려진다.
-        units.extend(self.context_before)
-        units.extend(self.context_after)
+        # context_after: context_before와 대칭적으로 동일 처리
+        units.extend(f"{prefix}{para}" for para in self.context_after)
 
         if not units:
             fallback = self.retrieval_text
