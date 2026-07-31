@@ -12,6 +12,8 @@ _table_utils.py
   - build_table_abstract  : 표 전체 요약 문자열 (multi-granularity 검색용)
   - find_duplicate_tables : Docling이 표 1개를 TableItem 2개로 중복 감지하는
                             케이스 탐지 (W4 Recall@1 회귀 원인 중 하나)
+  - is_toc_or_lof_decoy   : 목차(ToC)/그림·표 목록(LoF)이 표로 오인식된 경우 감지
+                            (v03 p3 필터. 실측 근거: context_dependent_maxpooling_실험.md 11절)
 """
 from __future__ import annotations
 
@@ -327,3 +329,72 @@ def find_duplicate_tables(doc, overlap_ratio: float = 0.6) -> dict[int, int]:
                     drop_map[loser] = winner
 
     return drop_map
+
+
+# ---------------------------------------------------------------------------
+# 8. p3 필터 — ToC/그림·표 목록 오탐 감지
+# ---------------------------------------------------------------------------
+
+P3_MAX_PAGE = 5
+P3_NUMERIC_RATIO_THRESHOLD = 0.7
+P3_MIN_ROWS = 3
+P3_HEADER_KEYWORDS = ("content", "list of table", "list of figure")
+
+
+def _has_toc_like_header(doc, page_no: int) -> bool:
+    """표 바로 앞(같은 페이지 또는 이전 페이지)에 ToC/LoF 계열 헤더가 있는지."""
+    for item in doc.texts:
+        d = item.model_dump()
+        if d.get("label") != "section_header":
+            continue
+        prov = d.get("prov", [])
+        if not prov:
+            continue
+        pg = prov[0].get("page_no")
+        if pg not in (page_no, page_no - 1):
+            continue
+        text = d.get("text", "").strip().lower()
+        if any(kw in text for kw in P3_HEADER_KEYWORDS):
+            return True
+    return False
+
+
+def is_toc_or_lof_decoy(
+    doc,
+    table,
+    max_page: int = P3_MAX_PAGE,
+    numeric_ratio_threshold: float = P3_NUMERIC_RATIO_THRESHOLD,
+    min_rows: int = P3_MIN_ROWS,
+) -> bool:
+    """목차(ToC)나 그림/표 목록(LoF)이 표로 오인식된 경우 True.
+
+    이 표는 build_evidence_units()의 EU 생성 대상에서 제외해야 한다
+    (baseline=HybridChunker 청킹에는 영향 주지 않음 — 호출자가
+    doc.tables를 필터링 전후로 원복해서 사용할 것).
+    """
+    prov = table.model_dump().get("prov", [])
+    if not prov:
+        return False
+    page_no = prov[0].get("page_no")
+    if page_no is None or page_no > max_page:
+        return False
+
+    try:
+        df = table.export_to_dataframe(doc)
+    except TypeError:
+        df = table.export_to_dataframe()
+    except Exception:
+        return False
+
+    if df.shape[0] < min_rows or df.shape[1] == 0:
+        return False
+
+    last_col_values = [str(v).strip() for v in df.iloc[:, -1] if str(v).strip()]
+    if not last_col_values:
+        return False
+
+    numeric_ratio = sum(1 for v in last_col_values if v.isdigit()) / len(last_col_values)
+    if numeric_ratio < numeric_ratio_threshold:
+        return False
+
+    return _has_toc_like_header(doc, page_no)
