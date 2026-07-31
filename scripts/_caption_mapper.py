@@ -117,6 +117,31 @@ def _looks_like_caption(text: Optional[str]) -> bool:
     return bool(_CAPTION_PATTERN.search(prefix))
 
 
+# [3-13] direct RefItem 검증 전용 — table.captions가 그림(Figure) 캡션을
+# 가리키는 경우 "direct"로 잘못 신뢰하지 않기 위함. ieee1.pdf 실사례:
+# 표의 captions RefItem이 "Fig. 3. Framework of ISAC technologies..."를
+# 가리키는데도 confidence="direct"로 확정돼버려서, interfaces.py 쪽에서
+# 이 잘못된 캡션이 EU의 모든 하위 유닛에 접두사로 증폭되는 사고로 이어졌음
+# (3-11/3-12 참고). caption_confidence는 "출처의 신뢰도"를 뜻하는데,
+# 그림 캡션을 direct로 확정하는 건 그 신뢰도 자체가 거짓이므로 여기서 막는다.
+#
+# bbox/인접 페이지 fallback(_find_caption_by_bbox, _find_caption_adjacent_page)은
+# 기존 _CAPTION_PATTERN(figure/fig/그림 포함)을 그대로 쓴다. 표 캡션이 정말
+# 없는 페이지에서는 근처 텍스트라도 "inferred"로 남겨야, interfaces.py의
+# safe_caption/context_before_with_fallback이 여전히 그 텍스트를 문맥으로
+# 활용할 수 있다 — direct 검증만 좁히고 fallback까지 좁히면 회수 가능한
+# 정보(ieee5.pdf의 "NWPU-RESISC45" 키워드)까지 원천 봉쇄되는 부작용이 있음.
+_TABLE_CAPTION_PATTERN = re.compile(r"(table|표)\s*\.?\s*[A-Z]?\.?\s*\d+", re.IGNORECASE)
+
+
+def _looks_like_table_caption(text: Optional[str]) -> bool:
+    """direct RefItem 검증 전용: table/표 패턴만 인정(그림 캡션 오매핑 방지)."""
+    if not text or len(text.strip()) < _MIN_CAPTION_LEN:
+        return False
+    prefix = text.strip()[:CAPTION_PREFIX_CHARS]
+    return bool(_TABLE_CAPTION_PATTERN.search(prefix))
+
+
 def _find_caption_by_bbox(
     doc, table_page: int, table_top_y: float, table_bot_y: float
 ) -> Optional[str]:
@@ -254,14 +279,18 @@ def map_table_caption(doc, table, table_index: int) -> CaptionMapping:
 
     # captions RefItem이 가리키는 텍스트 전부 검증 후 유효한 것만 병합
     # (복수 캡션 케이스: "Table 1: ..." + "(continued)" 같이 여러 RefItem이
-    #  각각 캡션답게 생긴 텍스트를 가리킬 수 있음)
+    #  각각 캡션답게 생길 수 있음)
+    # [3-13] 여기서는 _looks_like_table_caption(table/표 전용)을 쓴다.
+    # RefItem이 그림 캡션을 가리키면 direct로 인정하지 않고 아래 bbox
+    # fallback으로 넘긴다 — fallback은 여전히 넓은 패턴을 쓰므로 텍스트
+    # 자체를 잃지는 않고, confidence만 "direct"→"inferred"로 정직해진다.
     resolved_texts: list[str] = []
     resolved_refs: list[str] = []
     for ref in cap_refs:
         cref = _cref_of(ref)
         cap_dict = resolve_ref(doc, cref)
         candidate_text = cap_dict.get("text") or None
-        if not _looks_like_caption(candidate_text):
+        if not _looks_like_table_caption(candidate_text):
             continue
         caption_page = _get_prov_page(cap_dict)
         if caption_page != -1 and caption_page != table_page:
