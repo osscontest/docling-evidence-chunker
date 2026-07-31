@@ -141,6 +141,7 @@ class SmartChunker:
             build_table_abstract,
             find_duplicate_tables,
             group_sentences_by_row,
+            is_toc_or_lof_decoy,
         )
 
         page_sizes: dict[int, dict] = {}
@@ -163,6 +164,9 @@ class SmartChunker:
         for table_index, table in enumerate(doc.tables):
             if table_index in dup_drop_map:
                 continue  # 중복 표: 더 세밀하게 구조화된 쪽만 남김
+
+            if is_toc_or_lof_decoy(doc, table):
+                continue  # v03 p3 필터: 목차/그림·표 목록이 표로 오인식된 경우 EU 생성 대상에서 제외
 
             t_dict = table.model_dump()
             pg, bbox = self._get_prov(t_dict)
