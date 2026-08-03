@@ -16,10 +16,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install package
-        run: pip install -e .
+        run: pip install -e ".[dev]"
 
-      - name: 캡션 예외처리 검증 (scripts/08)
-        run: python scripts/08_caption_exception_tests.py
+      - name: 캡션 예외처리 검증
+        run: pytest -q
 
   pip-audit:
     runs-on: ubuntu-latest

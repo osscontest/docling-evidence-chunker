@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 langchain = ["langchain-core"]
+dev = ["pytest>=8"]
 
 [project.urls]
 Repository = "https://github.com/osscontest/docling-evidence-chunker"
