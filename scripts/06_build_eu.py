@@ -69,18 +69,17 @@ def get_prov(item_dict: dict) -> tuple[int, dict]:
 # ---------------------------------------------------------------------------
 
 def build_evidence_units(doc) -> list:
-    from interfaces import EvidenceUnit
-    from bbox_utils import normalize_bbox
-    from _caption_mapper import map_table_caption
-    from _table_utils import (
+    from evidence_chunker.unit import EvidenceUnit
+    from evidence_chunker.geometry import normalize_bbox
+    from evidence_chunker.caption import map_table_caption
+    from evidence_chunker.flatten import (
         build_col_header_map,
         build_row_header_map,
         build_table_abstract,
-        find_duplicate_tables,
         group_sentences_by_row,
-        is_toc_or_lof_decoy,
     )
-    from context_attacher import attach_context_paragraphs
+    from evidence_chunker.filters import find_duplicate_tables, is_toc_or_lof_decoy
+    from evidence_chunker.context import attach_context_paragraphs
 
     page_sizes: dict[int, dict] = {}
     if hasattr(doc, "pages"):
@@ -183,7 +182,7 @@ def split_oversized_units(eu_list: list) -> list:
     512토큰(DEFAULT_TOKEN_LIMIT) 초과 EU를 table_splitter.split_eu()로 행 단위 분할.
     한도 이내 EU는 그대로 통과.
     """
-    from table_splitter import split_eu
+    from evidence_chunker.split import split_eu
 
     result = []
     for eu in eu_list:
@@ -196,7 +195,7 @@ def split_oversized_units(eu_list: list) -> list:
 # ---------------------------------------------------------------------------
 
 def main():
-    from _converter import make_converter
+    from evidence_chunker.parser.docling import make_converter
 
     print(f"[6] Parsing: {PDF_PATH}")
     converter = make_converter()

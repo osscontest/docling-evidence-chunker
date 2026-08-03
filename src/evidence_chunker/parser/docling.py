@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 
-MODELS_DIR = Path(__file__).parent.parent / "models"
+MODELS_DIR = Path(__file__).parent.parent.parent.parent / "models"
 
 
 def make_converter():

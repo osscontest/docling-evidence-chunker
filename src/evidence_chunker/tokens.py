@@ -1,5 +1,5 @@
 import tiktoken
-from interfaces import EvidenceUnit
+from .unit import EvidenceUnit
 
 ENCODING = tiktoken.get_encoding("cl100k_base")
 DEFAULT_TOKEN_LIMIT = 512

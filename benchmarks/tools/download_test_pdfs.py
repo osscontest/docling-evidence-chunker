@@ -10,7 +10,7 @@ if sys.stdout.encoding != 'utf-8':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-PDF_DIR = os.path.join(os.path.dirname(__file__), "data", "pdfs")
+PDF_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "pdfs")
 os.makedirs(PDF_DIR, exist_ok=True)
 
 PDFS = [

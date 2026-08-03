@@ -14,8 +14,8 @@ W3 예외처리 (_caption_mapper.py에서 실제 처리, scripts/08에서 합성
   - 복수 캡션 병합 처리 (multi_caption=True)
 
 Usage:
-    python scripts/07_caption_table_mapping_poc.py [path/to/file.pdf]
-    python scripts/07_caption_table_mapping_poc.py --all   # data/pdfs 전체 순회
+    python benchmarks/report_caption_mapping.py [path/to/file.pdf]
+    python benchmarks/report_caption_mapping.py --all   # data/pdfs 전체 순회
 """
 import sys
 import os
@@ -25,8 +25,6 @@ import glob
 if hasattr(sys.stdout, 'buffer'):
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-
-sys.path.insert(0, os.path.dirname(__file__))
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "outputs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -41,7 +39,7 @@ def section(title: str) -> None:
 
 
 def run_on_pdf(converter, pdf_path: str) -> dict:
-    from _caption_mapper import map_all_captions, validate_mapping
+    from evidence_chunker.caption import map_all_captions, validate_mapping
 
     pdf_name = os.path.splitext(os.path.basename(pdf_path))[0]
     print(f"\n[7] Parsing: {pdf_path}")
@@ -98,7 +96,7 @@ def run_on_pdf(converter, pdf_path: str) -> dict:
 
 
 def main():
-    from _converter import make_converter
+    from evidence_chunker.parser.docling import make_converter
 
     if "--all" in sys.argv:
         pdf_paths = sorted(glob.glob(os.path.join(PDF_DIR, "*.pdf")))

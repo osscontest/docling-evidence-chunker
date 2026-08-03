@@ -26,6 +26,9 @@ env/
 # 환경변수
 .env
 
+# 재생성되는 회귀 스냅샷 (baseline/snapshot.py 출력) — 고정 참조는 eu_snapshot_stageN.json으로 커밋
+baseline/eu_snapshot.json
+
 # OS
 .DS_Store
 Thumbs.db

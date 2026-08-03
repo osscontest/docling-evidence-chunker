@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from bs4 import BeautifulSoup
 
-from interfaces import EvidenceUnit
-from token_counter import (
+from .unit import EvidenceUnit
+from .tokens import (
     count_tokens,
     exceeds_token_limit,
     DEFAULT_TOKEN_LIMIT,

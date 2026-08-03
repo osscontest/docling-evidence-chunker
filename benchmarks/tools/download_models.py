@@ -12,7 +12,7 @@ if hasattr(sys.stdout, 'buffer'):
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
+MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "models")
 os.makedirs(MODELS_DIR, exist_ok=True)
 
 REPOS = [
