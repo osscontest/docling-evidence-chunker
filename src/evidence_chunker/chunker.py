@@ -36,6 +36,156 @@ from .unit import EvidenceUnit
 
 
 # ---------------------------------------------------------------------------
+# Docling 참조 헬퍼
+#
+# scripts/06_build_eu.py의 get_prov/resolve_ref를 그대로 옮김 (Stage 2 커밋
+# "빌더 통합"). context.py._get_prov / caption.py의 유사 로직과 중복이지만,
+# 헬퍼 통합은 별도 커밋("_docling_shim.py") 몫이라 여기서는 건드리지 않는다.
+# ---------------------------------------------------------------------------
+
+def get_prov(item_dict: dict) -> tuple[int, dict]:
+    prov_list = item_dict.get("prov", [])
+    if not prov_list:
+        return -1, {}
+    p = prov_list[0]
+    return p.get("page_no", -1), p.get("bbox", {})
+
+
+def resolve_ref(doc, cref: str) -> dict:
+    """'#/texts/3' 형태의 cref → model_dump() dict."""
+    try:
+        parts = cref.strip("#/").split("/")
+        obj = doc
+        for p in parts:
+            obj = obj[int(p)] if p.isdigit() else getattr(obj, p)
+        return obj.model_dump() if hasattr(obj, "model_dump") else {}
+    except Exception:
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# EU 빌더
+#
+# scripts/06_build_eu.py의 build_evidence_units()를 정본으로 채택해 그대로
+# 옮김 — chunker.SmartChunker._build_eu()(구 버전)가 아니라 이쪽이 벤치마크
+# 수치(baseline/recall_before.txt 등)를 만든 구현이기 때문. 호출 순서(먼저
+# attach_context_paragraphs, 그 다음 flatten/table_abstract)도 06 그대로
+# 유지 — 순서를 바꾸면 abstract-as-similarity-reference 동작이 달라진다
+# (별도 커밋에서 의도적으로 다룸).
+# ---------------------------------------------------------------------------
+
+def build_evidence_units(
+    doc,
+    bbox_threshold: float = 300.0,
+    sim_threshold: float = 0.40,
+) -> list[EvidenceUnit]:
+    from .geometry import normalize_bbox
+    from .context import attach_context_paragraphs
+    from .caption import map_table_caption
+    from .flatten import (
+        build_col_header_map,
+        build_table_abstract,
+        group_sentences_by_row,
+    )
+    from .filters import find_duplicate_tables, is_toc_or_lof_decoy
+
+    page_sizes: dict[int, dict] = {}
+    if hasattr(doc, "pages"):
+        for pg_key, pg_val in doc.pages.items():
+            pg_dict = pg_val.model_dump() if hasattr(pg_val, "model_dump") else {}
+            page_sizes[int(pg_key)] = pg_dict.get("size", {})
+
+    # ── 중복 표 감지: Docling이 표 1개를 TableItem 2개로 중복 인식하는 경우
+    #    제거되는 쪽(loser)의 캡션이 direct로 잡혀 있으면 남는 쪽(winner)에 물려줌 ──
+    dup_drop_map = find_duplicate_tables(doc)
+    dup_donor_caption = {}
+    for loser_idx, winner_idx in dup_drop_map.items():
+        donor_mapping = map_table_caption(doc, doc.tables[loser_idx], loser_idx)
+        if donor_mapping.caption_text:
+            dup_donor_caption[winner_idx] = donor_mapping
+
+    eu_list: list[EvidenceUnit] = []
+    page_counters: dict[int, int] = {}
+
+    for table_index, table in enumerate(doc.tables):
+        if table_index in dup_drop_map:
+            continue  # 중복 표: 더 세밀하게 구조화된 쪽만 남김
+
+        if is_toc_or_lof_decoy(doc, table):
+            continue  # v03 p3 필터: 목차/그림·표 목록이 표로 오인식된 경우 EU 생성 대상에서 제외
+
+        t_dict = table.model_dump()
+        pg, bbox = get_prov(t_dict)
+        if pg == -1:
+            continue
+
+        idx = page_counters.get(pg, 0)
+        page_counters[pg] = idx + 1
+        eu_id = f"eu-p{pg}-{idx}"
+
+        # ── 캡션 (RefItem 직접 연결 + bbox fallback, caption.py) ──
+        cap_mapping = map_table_caption(doc, table, table_index)
+        if cap_mapping.confidence == "none" and table_index in dup_donor_caption:
+            cap_mapping = dup_donor_caption[table_index]
+        caption_text = cap_mapping.caption_text
+        caption_confidence = cap_mapping.confidence
+
+        # ── 각주 ────────────────────────────────────────────────────
+        footnote_text = None
+        fn_refs = t_dict.get("footnotes", [])
+        if fn_refs:
+            cref = (fn_refs[0].get("cref", "")
+                    if isinstance(fn_refs[0], dict)
+                    else getattr(fn_refs[0], "cref", ""))
+            fn_dict = resolve_ref(doc, cref)
+            footnote_text = fn_dict.get("text") or None
+
+        # ── 표 HTML ─────────────────────────────────────────────────
+        try:
+            table_html = table.export_to_html(doc) or None
+        except Exception:
+            table_html = None
+
+        # ── bbox 정규화 ──────────────────────────────────────────────
+        ps = page_sizes.get(pg, {})
+        norm_bbox = normalize_bbox(bbox, ps.get("width", 1.0), ps.get("height", 1.0))
+
+        eu = EvidenceUnit(
+            eu_id=eu_id,
+            page_no=pg,
+            caption_text=caption_text,
+            table_html=table_html,
+            footnote_text=footnote_text,
+            bbox=norm_bbox,
+            caption_confidence=caption_confidence,
+        )
+
+        # ── 섹션 헤더 + 인접 단락 (bbox 거리 + 임베딩 유사도, context.py) ──
+        # table_bbox를 직접 넘김: eu_id의 페이지 내 순번은 dedup으로 doc.tables의
+        # 스캔 순서와 어긋날 수 있어, eu_id 기반 재추정에 맡기면 안 됨.
+        attach_context_paragraphs(eu, doc, bbox_threshold, sim_threshold, table_bbox=bbox)
+
+        # ── Row Flattening + 다단 헤더 처리 ─────────────────────────
+        data = t_dict.get("data", {})
+        cells = data.get("table_cells", [])
+        num_rows = data.get("num_rows", 0)
+        num_cols = data.get("num_cols", 0)
+
+        eu.row_sentence_map = group_sentences_by_row(cells, num_rows, num_cols, footnote_text)
+        eu.flattened_rows = [
+            s for row in sorted(eu.row_sentence_map) for s in eu.row_sentence_map[row]
+        ]
+
+        # ── Table Abstract ───────────────────────────────────────────
+        col_map = build_col_header_map(cells, num_cols)
+        eu.table_abstract = build_table_abstract(caption_text, col_map, num_rows, eu.section_header)
+
+        eu_list.append(eu)
+
+    return eu_list
+
+
+# ---------------------------------------------------------------------------
 # SmartChunker
 # ---------------------------------------------------------------------------
 
@@ -106,7 +256,7 @@ class SmartChunker:
         """
         pdf_path = str(pdf_path)
         doc = self._parse(pdf_path)
-        eu_list = self._build_eu(doc)  # context_attacher까지 이 안에서 처리됨
+        eu_list = build_evidence_units(doc, self.bbox_threshold, self.sim_threshold)
 
         if output == "eu":
             return eu_list
@@ -180,135 +330,3 @@ class SmartChunker:
                 "pdf": PdfFormatOption(pipeline_options=pipeline_options)
             }
         )
-
-    def _build_eu(self, doc) -> list[EvidenceUnit]:
-        """DoclingDocument → List[EvidenceUnit] (context 없는 기본 뼈대)."""
-        from .geometry import normalize_bbox
-        from .context import attach_context_paragraphs
-        from .caption import map_table_caption
-        from .flatten import (
-            build_col_header_map,
-            build_table_abstract,
-            group_sentences_by_row,
-        )
-        from .filters import find_duplicate_tables, is_toc_or_lof_decoy
-
-        page_sizes: dict[int, dict] = {}
-        if hasattr(doc, "pages"):
-            for pg_key, pg_val in doc.pages.items():
-                pg_dict = pg_val.model_dump() if hasattr(pg_val, "model_dump") else {}
-                page_sizes[int(pg_key)] = pg_dict.get("size", {})
-
-        # 중복 표 감지 (Docling이 표 1개를 TableItem 2개로 중복 인식하는 경우 대응)
-        dup_drop_map = find_duplicate_tables(doc)
-        dup_donor_caption = {}
-        for loser_idx, winner_idx in dup_drop_map.items():
-            donor_mapping = map_table_caption(doc, doc.tables[loser_idx], loser_idx)
-            if donor_mapping.caption_text:
-                dup_donor_caption[winner_idx] = donor_mapping
-
-        eu_list: list[EvidenceUnit] = []
-        page_counters: dict[int, int] = {}
-
-        for table_index, table in enumerate(doc.tables):
-            if table_index in dup_drop_map:
-                continue  # 중복 표: 더 세밀하게 구조화된 쪽만 남김
-
-            if is_toc_or_lof_decoy(doc, table):
-                continue  # v03 p3 필터: 목차/그림·표 목록이 표로 오인식된 경우 EU 생성 대상에서 제외
-
-            t_dict = table.model_dump()
-            pg, bbox = self._get_prov(t_dict)
-            if pg == -1:
-                continue
-
-            idx = page_counters.get(pg, 0)
-            page_counters[pg] = idx + 1
-            eu_id = f"eu-p{pg}-{idx}"
-
-            # 캡션
-            cap_mapping = map_table_caption(doc, table, table_index)
-            if cap_mapping.confidence == "none" and table_index in dup_donor_caption:
-                cap_mapping = dup_donor_caption[table_index]
-
-            # 각주
-            footnote_text = self._resolve_footnote(doc, t_dict)
-
-            # 표 HTML
-            try:
-                table_html = table.export_to_html(doc) or None
-            except Exception:
-                table_html = None
-
-            # Row Flattening + Abstract
-            data = t_dict.get("data", {})
-            cells = data.get("table_cells", [])
-            num_rows = data.get("num_rows", 0)
-            num_cols = data.get("num_cols", 0)
-            row_sentence_map = group_sentences_by_row(cells, num_rows, num_cols, footnote_text)
-            flattened = [
-                s for row in sorted(row_sentence_map) for s in row_sentence_map[row]
-            ]
-            col_map = build_col_header_map(cells, num_cols)
-            abstract = build_table_abstract(cap_mapping.caption_text, col_map, num_rows, None)
-
-            # bbox 정규화
-            ps = page_sizes.get(pg, {})
-            norm_bbox = normalize_bbox(bbox, ps.get("width", 1.0), ps.get("height", 1.0))
-
-            eu = EvidenceUnit(
-                eu_id=eu_id,
-                page_no=pg,
-                caption_text=cap_mapping.caption_text,
-                caption_confidence=cap_mapping.confidence,
-                table_html=table_html,
-                footnote_text=footnote_text,
-                flattened_rows=flattened,
-                table_abstract=abstract,
-                bbox=norm_bbox,
-            )
-            eu.row_sentence_map = row_sentence_map
-
-            # 섹션 헤더 + 인접 단락 (bbox 거리 + 임베딩 유사도, context_attacher.py).
-            # table_bbox(원본 PDF 포인트 bbox)를 여기서 직접 넘김 — eu_id의
-            # 페이지 내 순번은 dedup으로 doc.tables의 스캔 순서와 어긋날 수
-            # 있어서, attach_context_paragraphs가 eu_id로 재추정하게 두면
-            # 제거된 중복 표의 위치를 잘못 집어올 수 있다.
-            attach_context_paragraphs(
-                eu, doc, self.bbox_threshold, self.sim_threshold, table_bbox=bbox
-            )
-
-            eu_list.append(eu)
-
-        return eu_list
-
-    # ------------------------------------------------------------------
-    # 헬퍼
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _get_prov(item_dict: dict) -> tuple[int, dict]:
-        prov_list = item_dict.get("prov", [])
-        if not prov_list:
-            return -1, {}
-        p = prov_list[0]
-        return p.get("page_no", -1), p.get("bbox", {})
-
-    @staticmethod
-    def _resolve_footnote(doc, t_dict: dict) -> str | None:
-        fn_refs = t_dict.get("footnotes", [])
-        if not fn_refs:
-            return None
-        ref = fn_refs[0]
-        cref = ref.get("cref", "") if isinstance(ref, dict) else getattr(ref, "cref", "")
-        if not cref:
-            return None
-        try:
-            parts = cref.strip("#/").split("/")
-            obj = doc
-            for p in parts:
-                obj = obj[int(p)] if p.isdigit() else getattr(obj, p)
-            d = obj.model_dump() if hasattr(obj, "model_dump") else {}
-            return d.get("text") or None
-        except Exception:
-            return None
