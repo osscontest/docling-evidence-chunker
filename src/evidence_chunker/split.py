@@ -298,6 +298,16 @@ def split_eu(
     )
 
 
+def split_oversized_units(eu_list: list[EvidenceUnit]) -> list[EvidenceUnit]:
+    """
+    512토큰(DEFAULT_TOKEN_LIMIT) 초과 EU를 split_eu()로 행 단위 분할.
+    한도 이내 EU는 그대로 통과.
+    """
+    result = []
+    for eu in eu_list:
+        result.extend(split_eu(eu).chunks)
+    return result
+
 
 if __name__ == "__main__":
     # 단계 1: 작은 EU (단일 반환)

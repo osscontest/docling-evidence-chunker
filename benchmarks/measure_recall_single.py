@@ -59,14 +59,10 @@ Usage:
 """
 import sys
 import os
-import importlib
 
 if hasattr(sys.stdout, 'buffer'):
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 PDF_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "pdfs", "docling_technical_report.pdf")
 
@@ -114,7 +110,8 @@ def main():
     from sentence_transformers import SentenceTransformer
     import numpy as np
 
-    build_eu_mod = importlib.import_module("06_build_eu")
+    from evidence_chunker.chunker import build_evidence_units
+    from evidence_chunker.split import split_oversized_units
 
     # ------------------------------------------------------------------
     # 1. 파싱 (baseline과 동일한 기본 DocumentConverter — 로컬 모델 경로를 쓰는
@@ -131,11 +128,11 @@ def main():
     # 2. EvidenceUnit 빌드 (+ 옵션에 따라 table_splitter 적용)
     # ------------------------------------------------------------------
     section("EvidenceUnit 빌드")
-    eu_list = build_eu_mod.build_evidence_units(doc)
+    eu_list = build_evidence_units(doc)
     print(f"  원본 표 EU: {len(eu_list)}개")
 
     if APPLY_SPLIT:
-        eu_list = build_eu_mod.split_oversized_units(eu_list)
+        eu_list = split_oversized_units(eu_list)
         n_split = sum(1 for eu in eu_list if eu.is_split)
         print(f"  분할(table_splitter) 적용 후: {len(eu_list)}개 ({n_split}개는 분할 조각)")
     else:
