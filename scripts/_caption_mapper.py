@@ -91,6 +91,38 @@ def _cref_of(ref) -> str:
     return ref.get("cref", "") if isinstance(ref, dict) else getattr(ref, "cref", "")
 
 
+# ---------------------------------------------------------------------------
+# [8/3] 구조적 그림 캡션 판별 (텍스트 패턴 대신 doc 구조로 판단)
+# ---------------------------------------------------------------------------
+# 3-13은 "fig/figure/그림으로 시작하는 텍스트"라는 표면 패턴으로 그림 캡션을
+# 걸러냈다 (interfaces.EvidenceUnit.safe_caption과 동일한 방식). 이건 ieee1.pdf에서
+# 실제로 관찰된 한 가지 실패 패턴(영어/한국어 "Figure/Fig/그림" 접두어)만 잡고,
+# Docling이 캡션을 다른 방식으로 잘못 연결하는 경우(다른 언어, 다른 표현)는
+# 여전히 못 잡는 whack-a-mole 방식이라는 지적이 있었음 (8/3 리뷰).
+#
+# Docling의 DoclingDocument 스키마상 TableItem과 PictureItem은 둘 다
+# FloatingItem을 상속하고, 둘 다 동일한 captions: list[RefItem] 필드를 갖는다
+# (docling-core doc_items.py 확인: FloatingItem.captions, PictureItem(FloatingItem),
+# TableItem(FloatingItem)). 즉 "이 텍스트가 어느 PictureItem의 captions에도
+# 참조되어 있는가"는 텍스트 내용을 전혀 안 보고도 "이 텍스트는 그림 캡션으로
+# 저자가 직접 지정한 것"임을 구조적으로 확인할 수 있는 훨씬 강한 신호다.
+# 텍스트 패턴 매칭보다 이걸 1차 방어선으로 쓰고, 텍스트 패턴(3-11 safe_caption)은
+# 이 구조적 체크가 못 잡는 경우를 위한 2차 안전망으로 남겨둔다.
+def _get_picture_caption_refs(doc) -> set[str]:
+    """doc.pictures[*].captions[*].cref 전체 집합. 실패해도 빈 집합(안전하게 무시)."""
+    refs: set[str] = set()
+    try:
+        for pic in getattr(doc, "pictures", []) or []:
+            pic_dict = pic.model_dump() if hasattr(pic, "model_dump") else {}
+            for cap in pic_dict.get("captions", []) or []:
+                cref = _cref_of(cap)
+                if cref:
+                    refs.add(cref)
+    except Exception:
+        return set()
+    return refs
+
+
 def _center_y(bbox: dict) -> float:
     return (bbox.get("t", 0.0) + bbox.get("b", 0.0)) / 2.0
 
@@ -143,13 +175,18 @@ def _looks_like_table_caption(text: Optional[str]) -> bool:
 
 
 def _find_caption_by_bbox(
-    doc, table_page: int, table_top_y: float, table_bot_y: float
+    doc, table_page: int, table_top_y: float, table_bot_y: float,
+    picture_caption_refs: set[str] | None = None,
 ) -> Optional[str]:
     """
     captions RefItem이 없거나 품질 미달일 때, 같은 페이지에서 bbox 거리 기준으로
     캡션처럼 보이는 텍스트를 찾는 fallback.
+
+    [8/3] picture_caption_refs가 주어지면, 이미 어느 PictureItem의 캡션으로
+    구조적으로 확인된 텍스트(self_ref가 그 집합에 있음)는 후보에서 제외한다.
     """
     candidates: list[tuple[float, str]] = []
+    picture_caption_refs = picture_caption_refs or set()
 
     for item in doc.texts:
         d = item.model_dump()
@@ -158,6 +195,8 @@ def _find_caption_by_bbox(
         prov_list = d.get("prov", [])
         if not prov_list or prov_list[0].get("page_no", -1) != table_page:
             continue
+        if d.get("self_ref") in picture_caption_refs:
+            continue  # [8/3] 그림 캡션으로 구조적으로 확인됨 -> 표 캡션 후보에서 제외
 
         text = d.get("text", "").strip()
         if not _looks_like_caption(text):
@@ -193,7 +232,8 @@ def _get_page_height(doc, page_no: int) -> Optional[float]:
 
 
 def _find_caption_adjacent_page(
-    doc, table_page: int, table_top_y: float, table_bot_y: float
+    doc, table_page: int, table_top_y: float, table_bot_y: float,
+    picture_caption_refs: set[str] | None = None,
 ) -> tuple[Optional[str], bool]:
     """
     같은 페이지 bbox fallback도 실패했을 때, 표 바로 앞/뒤 페이지에서 캡션 재탐색.
@@ -222,6 +262,7 @@ def _find_caption_adjacent_page(
     if not near_top and not near_bottom:
         return None, False
 
+    picture_caption_refs = picture_caption_refs or set()
     prev_candidates: list[tuple[float, str]] = []
     next_candidates: list[tuple[float, str]] = []
 
@@ -232,6 +273,8 @@ def _find_caption_adjacent_page(
         prov_list = d.get("prov", [])
         if not prov_list:
             continue
+        if d.get("self_ref") in picture_caption_refs:
+            continue  # [8/3] 그림 캡션으로 구조적으로 확인됨 -> 표 캡션 후보에서 제외
         pg = prov_list[0].get("page_no", -1)
         text = d.get("text", "").strip()
         if not _looks_like_caption(text):
@@ -277,6 +320,12 @@ def map_table_caption(doc, table, table_index: int) -> CaptionMapping:
     multi_caption = len(cap_refs) > 1
     cross_page = False
 
+    # [8/3] 그림 캡션으로 구조적으로 확인된 텍스트 ref 집합 (doc.pictures[*].captions).
+    # 1차 방어선 -- 텍스트가 "Fig/Figure/그림"으로 시작하는지 보는 3-13/3-11의
+    # 표면 패턴 매칭보다 강한 근거(저자가 실제로 그 텍스트를 그림 캡션으로
+    # 지정했다는 구조적 사실)이므로, direct RefItem 검증에도 우선 적용한다.
+    picture_caption_refs = _get_picture_caption_refs(doc)
+
     # captions RefItem이 가리키는 텍스트 전부 검증 후 유효한 것만 병합
     # (복수 캡션 케이스: "Table 1: ..." + "(continued)" 같이 여러 RefItem이
     #  각각 캡션답게 생길 수 있음)
@@ -288,6 +337,8 @@ def map_table_caption(doc, table, table_index: int) -> CaptionMapping:
     resolved_refs: list[str] = []
     for ref in cap_refs:
         cref = _cref_of(ref)
+        if cref in picture_caption_refs:
+            continue  # [8/3] 구조적으로 그림 캡션 확인됨 -> direct 후보에서 제외
         cap_dict = resolve_ref(doc, cref)
         candidate_text = cap_dict.get("text") or None
         if not _looks_like_table_caption(candidate_text):
@@ -309,7 +360,7 @@ def map_table_caption(doc, table, table_index: int) -> CaptionMapping:
             cross_page=cross_page,
         )
 
-    fallback_text = _find_caption_by_bbox(doc, table_page, table_top_y, table_bot_y)
+    fallback_text = _find_caption_by_bbox(doc, table_page, table_top_y, table_bot_y, picture_caption_refs)
     if fallback_text:
         return CaptionMapping(
             table_index=table_index,
@@ -322,7 +373,7 @@ def map_table_caption(doc, table, table_index: int) -> CaptionMapping:
         )
 
     adjacent_text, found_adjacent = _find_caption_adjacent_page(
-        doc, table_page, table_top_y, table_bot_y
+        doc, table_page, table_top_y, table_bot_y, picture_caption_refs
     )
     if found_adjacent:
         return CaptionMapping(
