@@ -1,0 +1,70 @@
+[32m[INFO] 2026-08-04 01:39:59,942 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+[32m[INFO] 2026-08-04 01:39:59,991 [RapidOCR] download_file.py:60: File exists and is valid: C:\project\smart-chunker\.venv\Lib\site-packages\rapidocr\models\PP-OCRv6_det_small.onnx[0m
+[32m[INFO] 2026-08-04 01:39:59,992 [RapidOCR] main.py:63: Using C:\project\smart-chunker\.venv\Lib\site-packages\rapidocr\models\PP-OCRv6_det_small.onnx[0m
+[32m[INFO] 2026-08-04 01:40:00,256 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+[32m[INFO] 2026-08-04 01:40:00,261 [RapidOCR] download_file.py:60: File exists and is valid: C:\project\smart-chunker\.venv\Lib\site-packages\rapidocr\models\ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
+[32m[INFO] 2026-08-04 01:40:00,271 [RapidOCR] main.py:63: Using C:\project\smart-chunker\.venv\Lib\site-packages\rapidocr\models\ch_ppocr_mobile_v2.0_cls_mobile.onnx[0m
+[32m[INFO] 2026-08-04 01:40:00,447 [RapidOCR] base.py:23: Using engine_name: onnxruntime[0m
+[32m[INFO] 2026-08-04 01:40:00,496 [RapidOCR] download_file.py:60: File exists and is valid: C:\project\smart-chunker\.venv\Lib\site-packages\rapidocr\models\PP-OCRv6_rec_small.onnx[0m
+[32m[INFO] 2026-08-04 01:40:00,497 [RapidOCR] main.py:63: Using C:\project\smart-chunker\.venv\Lib\site-packages\rapidocr\models\PP-OCRv6_rec_small.onnx[0m
+
+============================================================
+  PDF 파싱
+============================================================
+Loading weights:   0%|          | 0/770 [00:00<?, ?it/s]Loading weights:  31%|###1      | 241/770 [00:00<00:00, 2404.21it/s]Loading weights:  63%|######2   | 482/770 [00:00<00:00, 2199.35it/s]Loading weights:  92%|#########1| 705/770 [00:00<00:00, 2203.29it/s]Loading weights: 100%|##########| 770/770 [00:00<00:00, 2233.26it/s]
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+  파싱 완료. 표 3개 감지
+
+============================================================
+  EvidenceUnit 빌드
+============================================================
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 2795.14it/s]
+[transformers] Token indices sequence length is longer than the specified maximum sequence length for this model (618 > 512). Running this sequence through the model will result in indexing errors
+  원본 표 EU: 2개
+  분할(table_splitter) 미적용 (--no-split)
+    [eu-p5-0] p5 caption='Table 1: Runtime characteristics of Docling with t'
+    [eu-p8-0] p8 caption='Table 2: Prediction performance (mAP@0.5-0.95) of '
+
+============================================================
+  HybridChunker 청크 (표 청크 제외)
+============================================================
+  전체 HybridChunker 청크: 48개
+  표 관련(제외): 7개 -> [17, 18, 32, 33, 39, 40, 41]
+  유지(비-표): 41개
+
+============================================================
+  최종 코퍼스 (행 단위 다중 벡터)
+============================================================
+  총 118개 검색 유닛 (EU 2개 -> 행 단위 77개 + 비-표 HybridChunker 41개)
+
+============================================================
+  Recall@1 측정
+============================================================
+  임베딩 모델: sentence-transformers/all-MiniLM-L6-v2
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|##########| 103/103 [00:00<00:00, 1915.05it/s]
+Q: What is the TTS of Intel Xeon with 4 threads using native backend?
+   정답 표: eu-p5-0 | 검색된 청크 출처: eu-p5-0 | OK
+   매칭된 유닛: '[Table 1: Runtime characteristics of Docling with the standard model pipeline an'
+   반환될 부모 청크 미리보기: 'Table 1: Runtime characteristics of Docling with the standard model pipeline and settings, on our te'
+
+Q: What is the runtime characteristics table about?
+   정답 표: eu-p5-0 | 검색된 청크 출처: eu-p5-0 | OK
+   매칭된 유닛: 'Table 1: Runtime characteristics of Docling with the standard model pipeline and'
+   반환될 부모 청크 미리보기: 'Table 1: Runtime characteristics of Docling with the standard model pipeline and settings, on our te'
+
+Q: What is the mAP of YOLOv5 on DocLayNet?
+   정답 표: eu-p8-0 | 검색된 청크 출처: eu-p8-0 | OK
+   매칭된 유닛: '[Table 2: Prediction performance (mAP@0.5-0.95) of object detection networks on '
+   반환될 부모 청크 미리보기: 'Table 2: Prediction performance (mAP@0.5-0.95) of object detection networks on DocLayNet test set. T'
+
+Q: Which models were used for baseline experiments on DocLayNet?
+   정답 표: eu-p8-0 | 검색된 청크 출처: hybrid-39 | MISS
+   매칭된 유닛: 'Figure 3: Page 6 of the DocLayNet paper. If recognized, metadata such as authors'
+   반환될 부모 청크 미리보기: 'Figure 3: Page 6 of the DocLayNet paper. If recognized, metadata such as authors are appearing first'
+
+Q: What are the pages per second for pypdfium backend with 16 threads?
+   정답 표: eu-p5-0 | 검색된 청크 출처: eu-p5-0 | OK
+   매칭된 유닛: 'Table 1: Runtime characteristics of Docling with the standard model pipeline and'
+   반환될 부모 청크 미리보기: 'Table 1: Runtime characteristics of Docling with the standard model pipeline and settings, on our te'
+
+=== EU 통합 파이프라인 (split OFF, rerank OFF, embed=minilm) Recall@1: 0.80 (4/5) ===
