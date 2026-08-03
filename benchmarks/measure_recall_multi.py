@@ -21,14 +21,10 @@ Usage:
 """
 import sys
 import os
-import importlib
 
 if hasattr(sys.stdout, 'buffer'):
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 PDF_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "pdfs")
 APPLY_SPLIT = "--no-split" not in sys.argv
@@ -128,8 +124,10 @@ def build_corpus(doc, eu_list):
     return corpus_embed_texts, corpus_display, corpus_sources
 
 
-def evaluate_pdf(pdf_name, qa_list, model, build_eu_mod):
+def evaluate_pdf(pdf_name, qa_list, model):
     from docling.document_converter import DocumentConverter
+    from evidence_chunker.chunker import build_evidence_units
+    from evidence_chunker.split import split_oversized_units
     import numpy as np
 
     pdf_path = os.path.join(PDF_DIR, pdf_name)
@@ -137,9 +135,9 @@ def evaluate_pdf(pdf_name, qa_list, model, build_eu_mod):
     result = converter.convert(pdf_path)
     doc = result.document
 
-    eu_list = build_eu_mod.build_evidence_units(doc)
+    eu_list = build_evidence_units(doc)
     if APPLY_SPLIT:
-        eu_list = build_eu_mod.split_oversized_units(eu_list)
+        eu_list = split_oversized_units(eu_list)
 
     corpus_embed_texts, corpus_display, corpus_sources = build_corpus(doc, eu_list)
     corpus_embeddings = model.encode(corpus_embed_texts, normalize_embeddings=True)
@@ -158,13 +156,12 @@ def evaluate_pdf(pdf_name, qa_list, model, build_eu_mod):
 def main():
     from sentence_transformers import SentenceTransformer
 
-    build_eu_mod = importlib.import_module("06_build_eu")
     model = SentenceTransformer("all-MiniLM-L6-v2")
 
     all_results = []
     for pdf_name, qa_list in QA_SETS.items():
         section(f"평가: {pdf_name} ({len(qa_list)}문제)")
-        results = evaluate_pdf(pdf_name, qa_list, model, build_eu_mod)
+        results = evaluate_pdf(pdf_name, qa_list, model)
         all_results.extend(results)
         for r in results:
             tag = "OK  " if r["correct"] else "MISS"
