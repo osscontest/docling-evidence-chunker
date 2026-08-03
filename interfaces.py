@@ -114,9 +114,21 @@ class EvidenceUnit:
     # Docling이 "direct"로도 그림 캡션을 표에 구조적으로 잘못 연결하는
     # 케이스가 확인됨 (eu-p21-0-s1). confidence(출처)가 아니라 캡션
     # 텍스트 자체의 패턴(의미)으로 걸러야 안전하다.
+    #
+    # [8/3] 1차 방어선은 scripts/_caption_mapper.py의 _get_picture_caption_refs()로
+    # 옮겼다 — doc.pictures[*].captions와 구조적으로 대조해서, 실제로 어느
+    # PictureItem의 캡션으로 지정된 텍스트인지를 텍스트 내용과 무관하게(언어
+    # 상관없이) 판별한다. 여기 있는 fig/figure/그림 텍스트 패턴 매칭은 그
+    # 구조적 체크가 놓칠 수 있는 경우(예: doc.pictures가 비어있는 등) 대비한
+    # 2차 안전망으로 남겨둠 — 비용이 문자열 비교 한 줄이라 지우는 것보다
+    # 남겨두는 쪽의 손해가 없음. -> 하지만 추후 논의 필요
     @property
     def safe_caption(self) -> str | None:
-        """캡션이 Fig/Figure/그림으로 시작하면 표 정체성으로 신뢰하지 않고 None."""
+        """캡션이 Fig/Figure/그림으로 시작하면 표 정체성으로 신뢰하지 않고 None.
+
+        [8/3] 1차 방어선 아님 -- _caption_mapper.py의 구조적 체크(그림 아이템의
+        captions RefItem과 직접 대조)가 1차. 이건 그게 놓칠 경우를 위한 2차 백업.
+        """
         if not self.caption_text:
             return None
         lower_cap = self.caption_text.strip().lower()
