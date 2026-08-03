@@ -1,8 +1,8 @@
 """
-measure_recall_eu.py
+measure_recall_single.py
 
 W4: 3모듈 통합 파이프라인(caption_mapper + context_attacher + table_splitter)의
-Recall@1을 baseline_recall_local.py(Docling HybridChunker 단독, 0.60)와 비교 측정.
+Recall@1을 baseline.py(Docling HybridChunker 단독, 0.60)와 비교 측정.
 
 파이프라인:
     PDF --DocumentConverter()--> doc (baseline과 동일 컨버터/옵션)
@@ -51,11 +51,11 @@ W4 중간측정 회귀(0.60 -> 0.40) 원인 3건 및 조치:
     더 크게 작용한 것으로 보임. 기본값은 all-MiniLM 유지, --embed-model=bge|e5로 비교 가능.
 
 Usage:
-    python measure_recall_eu.py                      # split 적용, rerank 미적용, all-MiniLM (기본)
-    python measure_recall_eu.py --no-split            # table_splitter 끄고 측정 (ablation)
-    python measure_recall_eu.py --rerank              # cross-encoder 재순위화 켜고 측정 (이 벤치마크에선 손해로 측정됨)
-    python measure_recall_eu.py --embed-model=bge     # BAAI/bge-small-en-v1.5로 측정
-    python measure_recall_eu.py --embed-model=e5      # intfloat/e5-small-v2로 측정
+    python benchmarks/measure_recall_single.py                      # split 적용, rerank 미적용, all-MiniLM (기본)
+    python benchmarks/measure_recall_single.py --no-split            # table_splitter 끄고 측정 (ablation)
+    python benchmarks/measure_recall_single.py --rerank              # cross-encoder 재순위화 켜고 측정 (이 벤치마크에선 손해로 측정됨)
+    python benchmarks/measure_recall_single.py --embed-model=bge     # BAAI/bge-small-en-v1.5로 측정
+    python benchmarks/measure_recall_single.py --embed-model=e5      # intfloat/e5-small-v2로 측정
 """
 import sys
 import os
@@ -65,10 +65,10 @@ if hasattr(sys.stdout, 'buffer'):
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "scripts"))
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-PDF_PATH = os.path.join(os.path.dirname(__file__), "data", "pdfs", "docling_technical_report.pdf")
+PDF_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "pdfs", "docling_technical_report.pdf")
 
 APPLY_SPLIT = "--no-split" not in sys.argv
 APPLY_RERANK = "--rerank" in sys.argv  # 기본 OFF — 이 벤치마크에서 Recall@1 0.80->0.60 손해로 측정됨

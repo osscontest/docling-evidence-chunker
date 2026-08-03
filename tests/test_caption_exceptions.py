@@ -10,12 +10,7 @@
     Docling 실제 객체 대신, resolve_ref()가 기대하는 최소 인터페이스
     (.model_dump() 반환, doc.texts / doc.tables 리스트)만 흉내낸 Fake 객체 사용.
 """
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
-
-from _caption_mapper import map_table_caption
+from evidence_chunker.caption import map_table_caption
 
 
 # ---------------------------------------------------------------------------

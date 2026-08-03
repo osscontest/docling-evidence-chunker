@@ -16,21 +16,17 @@ authors = [
 dependencies = [
     "docling>=2.0.0",
     "tiktoken>=0.7.0",
+    "beautifulsoup4>=4.12",       # split.py — 이전에는 누락돼 있었음
+    "sentence-transformers>=2.2", # context.py — 누락 시 유사도 필터가 조용히 무력화됨
 ]
 
 [project.optional-dependencies]
 langchain = ["langchain-core"]
+llamaindex = ["llama-index-core"]
 dev = ["pytest>=8"]
 
 [project.urls]
 Repository = "https://github.com/osscontest/docling-evidence-chunker"
 
-# 기존 root-level 모듈 구조를 그대로 유지 (scripts/ 는 탐색용 PoC라 패키징 대상 아님)
-[tool.setuptools]
-py-modules = [
-    "interfaces",
-    "bbox_utils",
-    "context_attacher",
-    "langchain_wrapper",
-    "token_counter",
-]
+[tool.setuptools.packages.find]
+where = ["src"]

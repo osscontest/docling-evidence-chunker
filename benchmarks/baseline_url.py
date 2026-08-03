@@ -1,26 +1,12 @@
-"""
-baseline_recall_local.py
-
-baseline_recall.py와 동일 로직, 로컬 PDF(data/pdfs/docling_technical_report.pdf) +
-Windows UTF-8 콘솔 출력 지원만 추가. W4 Recall@1 비교용.
-"""
-import sys
-import os
-
-if hasattr(sys.stdout, 'buffer'):
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-
+# baseline_url.py
 from docling.document_converter import DocumentConverter
 from docling.chunking import HybridChunker
 from sentence_transformers import SentenceTransformer
 import numpy as np
 
-PDF_PATH = os.path.join(os.path.dirname(__file__), "data", "pdfs", "docling_technical_report.pdf")
-
 # 1. 파싱 & 청킹
 converter = DocumentConverter()
-result = converter.convert(PDF_PATH)
+result = converter.convert("https://arxiv.org/pdf/2408.09869")
 doc = result.document
 
 chunker = HybridChunker()
@@ -66,7 +52,7 @@ for qa in qa_set:
     hits += int(correct)
 
     print(f"Q: {qa['question']}")
-    print(f"   정답 청크: {qa['answer_chunk_idx']} | 검색된 청크: {top1_idx} | {'OK' if correct else 'MISS'}")
+    print(f"   정답 청크: {qa['answer_chunk_idx']} | 검색된 청크: {top1_idx} | {'✅' if correct else '❌'}")
     print()
 
 recall_at_1 = hits / len(qa_set)

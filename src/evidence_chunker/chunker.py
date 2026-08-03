@@ -1,10 +1,10 @@
 """
-smart_chunker.py
+chunker.py
 
 EvidenceChunker 메인 클래스.
 
 Usage:
-    from smart_chunker import SmartChunker
+    from evidence_chunker import SmartChunker
 
     chunker = SmartChunker()
     eus = chunker.chunk("paper.pdf")                                # List[EvidenceUnit] (표만)
@@ -32,7 +32,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from interfaces import EvidenceUnit
+from .unit import EvidenceUnit
 
 
 # ---------------------------------------------------------------------------
@@ -114,22 +114,22 @@ class SmartChunker:
         text_chunks = self._build_text_chunks(doc, eu_list) if include_text else []
 
         if output == "langchain":
-            from langchain_wrapper import eu_to_langchain, text_chunk_to_langchain
+            from .export.langchain import eu_to_langchain, text_chunk_to_langchain
             return [eu_to_langchain(eu) for eu in eu_list] + \
                    [text_chunk_to_langchain(c) for c in text_chunks]
 
         if output == "llamaindex":
-            from langchain_wrapper import eu_to_llamaindex, text_chunk_to_llamaindex
+            from .export.llamaindex import eu_to_llamaindex, text_chunk_to_llamaindex
             return [eu_to_llamaindex(eu) for eu in eu_list] + \
                    [text_chunk_to_llamaindex(c) for c in text_chunks]
 
         if output == "langchain_units":
-            from langchain_wrapper import eu_to_langchain_units, text_chunk_to_langchain
+            from .export.langchain import eu_to_langchain_units, text_chunk_to_langchain
             return [d for eu in eu_list for d in eu_to_langchain_units(eu)] + \
                    [text_chunk_to_langchain(c) for c in text_chunks]
 
         if output == "llamaindex_units":
-            from langchain_wrapper import eu_to_llamaindex_units, text_chunk_to_llamaindex
+            from .export.llamaindex import eu_to_llamaindex_units, text_chunk_to_llamaindex
             return [n for eu in eu_list for n in eu_to_llamaindex_units(eu)] + \
                    [text_chunk_to_llamaindex(c) for c in text_chunks]
 
@@ -146,7 +146,7 @@ class SmartChunker:
         """
         from docling.chunking import HybridChunker
         from docling_core.types.doc import DocItemLabel
-        from langchain_wrapper import filter_consumed_paragraphs
+        from .export.langchain import filter_consumed_paragraphs
 
         all_chunks = list(HybridChunker().chunk(doc))
         is_table_chunk = lambda c: any(
@@ -183,16 +183,15 @@ class SmartChunker:
 
     def _build_eu(self, doc) -> list[EvidenceUnit]:
         """DoclingDocument → List[EvidenceUnit] (context 없는 기본 뼈대)."""
-        from bbox_utils import normalize_bbox
-        from context_attacher import attach_context_paragraphs
-        from scripts._caption_mapper import map_table_caption
-        from scripts._table_utils import (
+        from .geometry import normalize_bbox
+        from .context import attach_context_paragraphs
+        from .caption import map_table_caption
+        from .flatten import (
             build_col_header_map,
             build_table_abstract,
-            find_duplicate_tables,
             group_sentences_by_row,
-            is_toc_or_lof_decoy,
         )
+        from .filters import find_duplicate_tables, is_toc_or_lof_decoy
 
         page_sizes: dict[int, dict] = {}
         if hasattr(doc, "pages"):

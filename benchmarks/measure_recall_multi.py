@@ -16,8 +16,8 @@ measure_recall_eu.py(문서 1개, 질문 5개)는 표본이 너무 작아서 질
     context_only  : 표 위아래 설명 문단에만 답이 있는 질문 -> context_attacher
 
 Usage:
-    python measure_recall_multi.py
-    python measure_recall_multi.py --no-split
+    python benchmarks/measure_recall_multi.py
+    python benchmarks/measure_recall_multi.py --no-split
 """
 import sys
 import os
@@ -27,10 +27,10 @@ if hasattr(sys.stdout, 'buffer'):
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "scripts"))
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-PDF_DIR = os.path.join(os.path.dirname(__file__), "data", "pdfs")
+PDF_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "pdfs")
 APPLY_SPLIT = "--no-split" not in sys.argv
 
 # ---------------------------------------------------------------------------
