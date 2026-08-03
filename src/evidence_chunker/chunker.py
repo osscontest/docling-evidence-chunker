@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Literal
 
 from .unit import EvidenceUnit
+from .split import split_oversized_units
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +258,7 @@ class SmartChunker:
         pdf_path = str(pdf_path)
         doc = self._parse(pdf_path)
         eu_list = build_evidence_units(doc, self.bbox_threshold, self.sim_threshold)
+        eu_list = split_oversized_units(eu_list)
 
         if output == "eu":
             return eu_list
