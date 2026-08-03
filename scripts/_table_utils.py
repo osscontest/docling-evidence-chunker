@@ -7,7 +7,8 @@ _table_utils.py
   - build_col_header_map  : 다단/병합 헤더 열 매핑 (col_span 처리)
   - build_row_header_map  : 행헤더 행 매핑 (row_span 처리)
   - infer_headers_fallback: Docling이 헤더 태깅 못 했을 때 휴리스틱 추론
-  - flatten_to_sentences  : 셀 → "행헤더의 열헤더는 값이다." 자연어 문장 (임베딩용)
+  - flatten_to_sentences  : 셀 → "행헤더 | 열헤더: 값" 구조화 문자열 (임베딩용)
+                            [8/3] 한글 문법 문장에서 언어 무관 key:value로 변경
   - detect_cell_marker    : 셀 내 각주 마커(*†‡) 감지
   - build_table_abstract  : 표 전체 요약 문자열 (multi-granularity 검색용)
   - find_duplicate_tables : Docling이 표 1개를 TableItem 2개로 중복 감지하는
@@ -187,17 +188,20 @@ def group_sentences_by_row(
         col_header = col_map.get(col, f"Col{col}")
         row_header = row_map.get(row)
 
-        # 문장 조립
-        if row_header:
-            sentence = f"{row_header}의 {col_header}는 {value}이다."
-        else:
-            sentence = f"{col_header}: {value}"
-
-        # 각주 마커 처리
-        if marker and footnote_text:
-            sentence += f" (주: {footnote_text.strip()})"
-        elif marker:
-            sentence += f" ({marker}표시)"
+        # [8/3 재정리] 기존엔 "{row}의 {col}는 {value}이다." 한글 문법 문장을
+        # if/else로 케이스(row_header 있음/없음, marker+footnote/marker만)
+        # 별로 다른 템플릿 문자열을 골라 조립했음. "문장을 만들 필요가
+        # 있는가"라는 지적을 받고 재검토 -- 애초에 문장(어느 언어든 문법)이
+        # 필요한 게 아니라 각 셀을 검색 가능한 짧은 단위로 쪼개는 게 목적
+        # (W4 회귀 노트: 256토큰 잘림 문제 해결용). 그러면 "케이스별로 다른
+        # 템플릿을 고르는" 대신, build_table_abstract()가 이미 쓰던 "있는
+        # 값만 모아서 이어붙이기" 패턴으로 통일하는 게 맞다 -- 분기가 아니라
+        # 데이터가 있고 없고의 문제이므로 리스트 필터링으로 표현.
+        label_parts = [p for p in (row_header, col_header) if p]
+        sentence = f"{' | '.join(label_parts)}: {value}"
+        if marker:
+            note = footnote_text.strip() if footnote_text else marker
+            sentence += f" [{note}]"
 
         grouped[row].append(sentence)
 
@@ -232,8 +236,8 @@ def build_table_abstract(
     LLM 없이 규칙 기반으로 표 요약 생성.
     광범위 질의("지역별 매출 표가 어디 있어?")에 대한 검색용.
 
-    포맷:
-        "[섹션헤더] > [캡션]. 열: [열헤더 목록]. 총 [N]행 데이터."
+    포맷 (8/3 개정, 한글 라벨 -> 언어 무관 구조 라벨):
+        "[섹션헤더] > [캡션]. Columns: [열헤더 목록]. [N] data row(s)."
     """
     parts: list[str] = []
 
@@ -243,13 +247,17 @@ def build_table_abstract(
     if caption_text:
         parts.append(caption_text)
 
+    # [8/3] "열: "/"총 N행 데이터." 한글 라벨 제거 -- group_sentences_by_row()와
+    # 동일한 이유(영어 PDF + 영어 중심 임베딩 모델). table_about 유형(열 이름/
+    # 행 개수를 묻는 질문)이 이 table_abstract에서 답을 찾는 경우가 많아서
+    # flattened_rows 쪽만 고치면 이 유형은 여전히 안 고쳐진 상태로 남았을 것.
     cols = [v for v in col_map.values() if v]
     if cols:
-        parts.append("열: " + ", ".join(cols[:6]) + ("..." if len(cols) > 6 else ""))
+        parts.append("Columns: " + ", ".join(cols[:6]) + ("..." if len(cols) > 6 else ""))
 
     data_rows = max(0, num_rows - 1)  # 헤더 행 제외
     if data_rows > 0:
-        parts.append(f"총 {data_rows}행 데이터.")
+        parts.append(f"{data_rows} data row(s).")
 
     return " ".join(parts)
 
