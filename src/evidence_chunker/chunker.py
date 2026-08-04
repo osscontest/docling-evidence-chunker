@@ -5,32 +5,29 @@ EvidenceChunker 메인 클래스.
 
 Usage:
     from evidence_chunker import EvidenceChunker
+    from evidence_chunker.export.langchain import to_langchain, to_langchain_units
 
     chunker = EvidenceChunker()
-    eus = chunker.chunk("paper.pdf")                                # List[EvidenceUnit] (표만)
+    eus = chunker.chunk("paper.pdf")                # List[EvidenceUnit] (표만)
 
-    # output="langchain"/"llamaindex"(및 _units)는 기본으로 표(EU) + 일반
-    # 본문을 한 번에 합쳐서 반환한다 (include_text=True가 기본값). EU가
+    # build_corpus()는 표(EU) + 일반 본문을 한 번에 합쳐서 반환한다. EU가
     # 이미 흡수한 문단은 자동으로 중복 제거되므로, 이 한 줄 호출만으로
     # 바로 벡터스토어에 넣을 수 있는 최종 코퍼스가 나온다.
-    docs = chunker.chunk("paper.pdf", output="langchain")           # List[LangChainDocument] (표+본문)
-    nodes = chunker.chunk("paper.pdf", output="llamaindex")         # List[LlamaIndex TextNode] (표+본문)
+    chunks = chunker.build_corpus("paper.pdf")      # List[RetrievalChunk] (표+본문)
+    docs = to_langchain(chunks)                     # List[LangChainDocument]
 
-    # 표만 필요하거나 직접 다른 텍스트 청커를 쓰고 싶으면 include_text=False
-    docs_tables_only = chunker.chunk("paper.pdf", output="langchain", include_text=False)
+    # 표만 필요하거나 직접 다른 텍스트 청커를 쓰고 싶으면 chunk()만 쓸 것.
+    docs_tables_only = to_langchain(chunker.chunk("paper.pdf"))
 
     # 행 단위 다중 벡터(small-to-big): 표의 특정 셀 값을 묻는 질의에 강함.
     # 벡터스토어에는 이 작은 Document/Node들을 넣고, 검색 후에는
     # metadata["parent_text"](표 전체 맥락)를 LLM에 넘길 것.
-    docs = chunker.chunk("paper.pdf", output="langchain_units")     # List[LangChainDocument]
-    nodes = chunker.chunk("paper.pdf", output="llamaindex_units")   # List[LlamaIndex TextNode]
+    docs = to_langchain_units(chunks)               # List[LangChainDocument]
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Literal
 
 from .unit import EvidenceUnit
 from .split import split_oversized_units
@@ -227,14 +224,13 @@ class EvidenceChunker:
     def chunk(
         self,
         pdf_path: str | Path,
-        output: Literal[
-            "eu", "langchain", "llamaindex", "langchain_units", "llamaindex_units"
-        ] = "eu",
-        include_text: bool = True,
         doc_id: str | None = None,
-    ) -> list:
+    ) -> list[EvidenceUnit]:
         """
-        PDF를 Evidence Unit(+ 필요시 일반 본문)으로 청킹.
+        PDF에서 표(Evidence Unit)만 추출.
+
+        표와 무관한 일반 본문까지 합친 검색 코퍼스가 필요하면
+        build_corpus()를 쓸 것.
 
         Args:
             pdf_path: PDF 파일 경로
@@ -242,73 +238,62 @@ class EvidenceChunker:
                       PDF 여러 개를 한 벡터스토어에 넣을 때 eu_id 충돌(서로 다른
                       문서의 "eu-p3-0" 같은 것)을 막는 접두사로 쓰인다. 같은
                       파일명이 다른 디렉터리에 있을 수 있으면 직접 지정할 것.
-            output:   반환 타입
-                      "eu"               → List[EvidenceUnit] (표만. include_text 무시)
-                      "langchain"        → List[LangChainDocument] (EU 1개 = Document 1개)
-                      "llamaindex"       → List[LlamaIndex TextNode] (EU 1개 = TextNode 1개)
-                      "langchain_units"  → List[LangChainDocument] (EU 1개 = 행 단위 여러 개,
-                                            small-to-big. metadata["parent_text"]가 전체 맥락)
-                      "llamaindex_units" → List[LlamaIndex TextNode] (위와 동일, LlamaIndex용)
-            include_text: output이 "eu"가 아닐 때, 표와 무관한 일반 본문도
-                      Docling HybridChunker로 청킹해서 같이 반환할지 여부.
-                      기본 True — `chunker.chunk(pdf_path, output="langchain")` 한 번
-                      호출로 표+본문이 이미 중복 없이 정리된 최종 코퍼스를 받을 수
-                      있게 하기 위함. EU가 이미 context_before/after로 흡수한 문단은
-                      langchain_wrapper.filter_consumed_paragraphs()로 자동 제거되므로
-                      같은 문단이 EU와 일반 청크 양쪽에 중복 등장하지 않는다.
-                      직접 다른 텍스트 청커를 쓰고 싶거나 표만 필요하면 False로 끌 것.
-                      반환 리스트 안에서는 metadata["eu_id"]가 None인 항목이 일반
-                      본문 청크(EU 아님)를 뜻한다.
 
         Returns:
-            output 타입에 맞는 리스트. output != "eu"이고 include_text=True이면
-            같은 타입(LangChainDocument 등) 안에 EU 유래 항목과 일반 본문 유래
-            항목이 함께 섞여 있다 — 리스트 자체의 타입은 항상 균일하다.
+            List[EvidenceUnit]
         """
         pdf_path = str(pdf_path)
         doc = self._parse(pdf_path)
         eu_list = build_evidence_units(doc, self.bbox_threshold, self.sim_threshold, doc_id)
+        return split_oversized_units(eu_list)
+
+    def build_corpus(
+        self,
+        pdf_path: str | Path,
+        doc_id: str | None = None,
+    ) -> list:
+        """
+        PDF를 표(EU) + 일반 본문을 합친 검색 코퍼스로 변환.
+
+        EU가 context_before/after로 이미 흡수한 문단은 자동으로 중복
+        제거되므로, 이 한 번 호출로 바로 벡터스토어에 넣을 수 있는 최종
+        코퍼스가 나온다 (같은 문단이 EU와 일반 청크 양쪽에 중복 등장해
+        검색 코퍼스 안에서 서로 경쟁하는 카니발라이제이션 방지).
+
+        Args:
+            pdf_path: PDF 파일 경로
+            doc_id:   chunk() 참고
+
+        Returns:
+            List[RetrievalChunk] — EvidenceUnit(표)과 export.TextChunk(일반
+            본문)이 섞인 리스트. 둘 다 chunk_id/text/retrieval_text/
+            retrieval_units/metadata를 노출하므로 export.to_langchain() 등에
+            타입 구분 없이 그대로 넘기면 됨. chunk_id가 None인 항목이 일반
+            본문 청크(EU 아님)를 뜻한다.
+        """
+        from .export import TextChunk
+
+        pdf_path = str(pdf_path)
+        doc = self._parse(pdf_path)
+        eu_list = build_evidence_units(doc, self.bbox_threshold, self.sim_threshold, doc_id)
         eu_list = split_oversized_units(eu_list)
-
-        if output == "eu":
-            return eu_list
-
-        text_chunks = self._build_text_chunks(doc, eu_list) if include_text else []
-
-        if output == "langchain":
-            from .export.langchain import eu_to_langchain, text_chunk_to_langchain
-            return [eu_to_langchain(eu) for eu in eu_list] + \
-                   [text_chunk_to_langchain(c) for c in text_chunks]
-
-        if output == "llamaindex":
-            from .export.llamaindex import eu_to_llamaindex, text_chunk_to_llamaindex
-            return [eu_to_llamaindex(eu) for eu in eu_list] + \
-                   [text_chunk_to_llamaindex(c) for c in text_chunks]
-
-        if output == "langchain_units":
-            from .export.langchain import eu_to_langchain_units, text_chunk_to_langchain
-            return [d for eu in eu_list for d in eu_to_langchain_units(eu)] + \
-                   [text_chunk_to_langchain(c) for c in text_chunks]
-
-        if output == "llamaindex_units":
-            from .export.llamaindex import eu_to_llamaindex_units, text_chunk_to_llamaindex
-            return [n for eu in eu_list for n in eu_to_llamaindex_units(eu)] + \
-                   [text_chunk_to_llamaindex(c) for c in text_chunks]
-
-        return eu_list
+        text_chunks = self._build_text_chunks(doc, eu_list)
+        return eu_list + [TextChunk(c) for c in text_chunks]
 
     def _build_text_chunks(self, doc, eu_list: list[EvidenceUnit]) -> list:
         """
-        표와 무관한 일반 본문 청크 생성 (Docling HybridChunker).
+        표와 무관한 일반 본문 청크 생성 (Docling HybridChunker), 원본 청크
+        그대로 반환 (export.TextChunk 래핑은 build_corpus()가 함).
+
         EU가 context_before/after로 이미 흡수한 문단과 겹치는 청크는
-        langchain_wrapper.filter_consumed_paragraphs()로 제거한다 —
-        그렇게 안 하면 같은 문단이 EU 안에도, 여기 일반 청크로도 중복
-        등장해서 검색 코퍼스 안에서 서로 경쟁하는 문제(카니발라이제이션)가
-        생긴다 (Version01 벤치마크에서 EU 검색 실패의 주요 원인으로 확인됨).
+        export.filter_consumed_paragraphs()로 제거한다 — 그렇게 안 하면
+        같은 문단이 EU 안에도, 여기 일반 청크로도 중복 등장해서 검색
+        코퍼스 안에서 서로 경쟁하는 문제(카니발라이제이션)가 생긴다
+        (Version01 벤치마크에서 EU 검색 실패의 주요 원인으로 확인됨).
         """
         from docling.chunking import HybridChunker
         from docling_core.types.doc import DocItemLabel
-        from .export.langchain import filter_consumed_paragraphs
+        from .export import filter_consumed_paragraphs
 
         all_chunks = list(HybridChunker().chunk(doc))
         is_table_chunk = lambda c: any(
