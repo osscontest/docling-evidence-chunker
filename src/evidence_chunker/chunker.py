@@ -36,9 +36,14 @@ from .split import split_oversized_units
 # ---------------------------------------------------------------------------
 # Docling 참조 헬퍼
 #
-# scripts/06_build_eu.py의 get_prov/resolve_ref를 그대로 옮김 (Stage 2 커밋
-# "빌더 통합"). context.py._get_prov / caption.py의 유사 로직과 중복이지만,
-# 헬퍼 통합은 별도 커밋("_docling_shim.py") 몫이라 여기서는 건드리지 않는다.
+# Stage 4에서 caption.py/context.py/filters.py는 ParsedDoc으로 전환되면서
+# 각자 갖고 있던 get_prov/resolve_ref류 중복 헬퍼가 전부 사라졌다(대신
+# TextBlock/TableBlock의 필드를 직접 씀). 여기 남은 get_prov 하나가 마지막
+# 사용처 — EvidenceUnit.bbox는 BOTTOMLEFT 유지가 공개 계약(geometry.
+# normalize_bbox 참고)이라, TOPLEFT로 정규화된 TableBlock.bbox를 못 쓰고
+# raw model_dump()에서 직접 bbox를 뽑아야 한다. resolve_ref는 완전히
+# 제거됨 — 각주 텍스트도 TableBlock.footnote_refs(parser가 이미 인덱스로
+# 해석해둠)로 대체됐다.
 # ---------------------------------------------------------------------------
 
 def get_prov(item_dict: dict) -> tuple[int, dict]:
@@ -47,18 +52,6 @@ def get_prov(item_dict: dict) -> tuple[int, dict]:
         return -1, {}
     p = prov_list[0]
     return p.get("page_no", -1), p.get("bbox", {})
-
-
-def resolve_ref(doc, cref: str) -> dict:
-    """'#/texts/3' 형태의 cref → model_dump() dict."""
-    try:
-        parts = cref.strip("#/").split("/")
-        obj = doc
-        for p in parts:
-            obj = obj[int(p)] if p.isdigit() else getattr(obj, p)
-        return obj.model_dump() if hasattr(obj, "model_dump") else {}
-    except Exception:
-        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -116,15 +109,15 @@ def build_evidence_units(
     eu_list: list[EvidenceUnit] = []
     page_counters: dict[int, int] = {}
 
-    for table_index, table in enumerate(doc.tables):
+    for table_block in parsed.tables:
+        table_index = table_block.index
         if table_index in dup_drop_map:
             continue  # 중복 표: 더 세밀하게 구조화된 쪽만 남김
 
-        if is_toc_or_lof_decoy(parsed, parsed.tables[table_index]):
+        if is_toc_or_lof_decoy(parsed, table_block):
             continue  # v03 p3 필터: 목차/그림·표 목록이 표로 오인식된 경우 EU 생성 대상에서 제외
 
-        t_dict = table.model_dump()
-        pg, bbox = get_prov(t_dict)
+        pg = table_block.page_no
         if pg == -1:
             continue
 
@@ -133,31 +126,25 @@ def build_evidence_units(
         eu_id = f"{doc_id}-p{pg}-{idx}"
 
         # ── 캡션 (RefItem 직접 연결 + bbox fallback, caption.py) ──
-        cap_mapping = map_table_caption(parsed, parsed.tables[table_index], table_index)
+        cap_mapping = map_table_caption(parsed, table_block, table_index)
         if cap_mapping.confidence == "none" and table_index in dup_donor_caption:
             cap_mapping = dup_donor_caption[table_index]
         caption_text = cap_mapping.caption_text
         caption_confidence = cap_mapping.confidence
 
-        # ── 각주 ────────────────────────────────────────────────────
+        # ── 각주 (TableBlock.footnote_refs — parser가 이미 인덱스로 해석해둠) ──
         footnote_text = None
-        fn_refs = t_dict.get("footnotes", [])
-        if fn_refs:
-            cref = (fn_refs[0].get("cref", "")
-                    if isinstance(fn_refs[0], dict)
-                    else getattr(fn_refs[0], "cref", ""))
-            fn_dict = resolve_ref(doc, cref)
-            footnote_text = fn_dict.get("text") or None
+        if table_block.footnote_refs:
+            footnote_text = parsed.texts[table_block.footnote_refs[0]].text or None
 
-        # ── 표 HTML ─────────────────────────────────────────────────
-        try:
-            table_html = table.export_to_html(doc) or None
-        except Exception:
-            table_html = None
+        # ── 표 HTML (TableBlock.html — parser가 파싱 시점에 미리 계산해둠) ──
+        table_html = table_block.html
 
-        # ── bbox 정규화 ──────────────────────────────────────────────
+        # ── bbox 정규화 (EvidenceUnit.bbox는 BOTTOMLEFT 유지가 공개 계약이라
+        #    TOPLEFT로 정규화된 table_block.bbox가 아니라 raw bbox를 그대로 씀) ──
+        _, raw_bbox = get_prov(doc.tables[table_index].model_dump())
         ps = page_sizes.get(pg, {})
-        norm_bbox = normalize_bbox(bbox, ps.get("width", 1.0), ps.get("height", 1.0))
+        norm_bbox = normalize_bbox(raw_bbox, ps.get("width", 1.0), ps.get("height", 1.0))
 
         eu = EvidenceUnit(
             eu_id=eu_id,
@@ -171,20 +158,16 @@ def build_evidence_units(
         )
 
         # ── 섹션 헤더 + 인접 단락 (bbox 거리 + 임베딩 유사도, context.py) ──
-        # table_bbox를 직접 넘김: eu_id의 페이지 내 순번은 dedup으로 doc.tables의
+        # table_bbox를 직접 넘김: eu_id의 페이지 내 순번은 dedup으로 parsed.tables의
         # 스캔 순서와 어긋날 수 있어, eu_id 기반 재추정에 맡기면 안 됨.
-        # parsed.tables[table_index].bbox(TOPLEFT 정규화됨)를 넘긴다 — raw
-        # bbox(BOTTOMLEFT dict, normalize_bbox()용으로 위에서 이미 씀)가 아님.
         attach_context_paragraphs(
-            eu, parsed, bbox_threshold, sim_threshold,
-            table_bbox=parsed.tables[table_index].bbox,
+            eu, parsed, bbox_threshold, sim_threshold, table_bbox=table_block.bbox,
         )
 
         # ── Row Flattening + 다단 헤더 처리 ─────────────────────────
-        data = t_dict.get("data", {})
-        cells = data.get("table_cells", [])
-        num_rows = data.get("num_rows", 0)
-        num_cols = data.get("num_cols", 0)
+        cells = table_block.cells
+        num_rows = table_block.num_rows
+        num_cols = table_block.num_cols
 
         eu.row_sentence_map = group_sentences_by_row(cells, num_rows, num_cols, footnote_text)
         eu.flattened_rows = [
