@@ -1,7 +1,10 @@
 """
 Stage 4 파서 추상화의 최종 증거: 알고리즘 4개 모듈(caption/context/filters/
 flatten)이 Docling 없이도 import된다는 것을 sys.meta_path 훅으로 실제로
-docling import를 막고 확인한다.
+docling import를 막고 확인한다. docling과 docling_core(DoclingDocument
+타입을 정의하는 별도 패키지) 둘 다 막는다 — 하나만 막으면 누가
+docling_core.types를 알고리즘 모듈에 직접 쓰는 결합을 추가해도 이 테스트가
+못 잡는다.
 
 "그냥 Docling 래퍼 아니냐"는 질문에 대한 실행 가능한 반박 — 알고리즘이
 파서 없이 독립적으로 존재한다는 걸 이 테스트가 통과하는 것 자체가 증명한다.
@@ -27,9 +30,12 @@ _ALGORITHM_MODULES = [
 ]
 
 
+_BLOCKED_PREFIXES = ("docling", "docling_core")  # docling-core는 별도 패키지(DoclingDocument 타입 정의)
+
+
 class _BlockDocling:
     def find_spec(self, name, path=None, target=None):
-        if name == "docling" or name.startswith("docling."):
+        if name in _BLOCKED_PREFIXES or name.startswith(tuple(p + "." for p in _BLOCKED_PREFIXES)):
             raise ImportError(f"{name} blocked for test")
         return None
 
