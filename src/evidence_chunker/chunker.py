@@ -4,9 +4,9 @@ chunker.py
 EvidenceChunker 메인 클래스.
 
 Usage:
-    from evidence_chunker import SmartChunker
+    from evidence_chunker import EvidenceChunker
 
-    chunker = SmartChunker()
+    chunker = EvidenceChunker()
     eus = chunker.chunk("paper.pdf")                                # List[EvidenceUnit] (표만)
 
     # output="langchain"/"llamaindex"(및 _units)는 기본으로 표(EU) + 일반
@@ -68,7 +68,7 @@ def resolve_ref(doc, cref: str) -> dict:
 # EU 빌더
 #
 # scripts/06_build_eu.py의 build_evidence_units()를 정본으로 채택해 그대로
-# 옮김 — chunker.SmartChunker._build_eu()(구 버전)가 아니라 이쪽이 벤치마크
+# 옮김 — chunker.EvidenceChunker._build_eu()(구 버전)가 아니라 이쪽이 벤치마크
 # 수치(baseline/recall_before.txt 등)를 만든 구현이기 때문. 호출 순서(먼저
 # attach_context_paragraphs, 그 다음 flatten/table_abstract)도 06 그대로
 # 유지 — 순서를 바꾸면 abstract-as-similarity-reference 동작이 달라진다
@@ -192,10 +192,10 @@ def build_evidence_units(
 
 
 # ---------------------------------------------------------------------------
-# SmartChunker
+# EvidenceChunker
 # ---------------------------------------------------------------------------
 
-class SmartChunker:
+class EvidenceChunker:
     """
     PDF → Evidence Unit 파이프라인 래퍼.
 
