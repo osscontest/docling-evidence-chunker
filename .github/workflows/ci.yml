@@ -40,7 +40,7 @@ jobs:
         run: pip install dist/*.whl
 
       - name: 클린 디렉터리에서 import 검증
-        run: cd /tmp && python -c "from evidence_chunker import SmartChunker, EvidenceUnit"
+        run: cd /tmp && python -c "from evidence_chunker import EvidenceChunker, EvidenceUnit"
 
   pip-audit:
     runs-on: ubuntu-latest

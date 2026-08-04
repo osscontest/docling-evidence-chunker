@@ -142,7 +142,7 @@ def filter_consumed_paragraphs(
             page_content(LangChain Document) 또는 text(LlamaIndex
             TextNode, Docling HybridChunker 청크) 속성 중 하나를 가지고
             있어야 함.
-        eu_list: SmartChunker가 만든 EvidenceUnit 리스트.
+        eu_list: EvidenceChunker가 만든 EvidenceUnit 리스트.
         min_substring_len: 이 길이(정규화 후 문자 수) 미만인 문자열은
             완전 일치(exact match)만 적용하고 부분 포함(substring) 매칭은
             건너뛴다. 짧은 각주/라벨("Results" 같은)이 무관한 긴 청크에
