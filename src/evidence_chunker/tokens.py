@@ -1,11 +1,24 @@
-import tiktoken
 from .unit import EvidenceUnit
 
-ENCODING = tiktoken.get_encoding("cl100k_base")
+_ENCODING = None
 DEFAULT_TOKEN_LIMIT = 512
 
+
+def _get_encoding():
+    """tiktoken.get_encoding()은 첫 호출 시 인코더 파일을 네트워크에서 받아올
+    수 있어(로컬 캐시 없으면), 모듈 import 시점에 즉시 실행하면 오프라인
+    환경에서 `import evidence_chunker`(패키지 __init__.py가 chunker.py를
+    거쳐 이 모듈까지 끌고 옴) 자체가 실패한다. 실제로 첫 토큰 카운트가
+    필요한 시점까지 지연."""
+    global _ENCODING
+    if _ENCODING is None:
+        import tiktoken
+        _ENCODING = tiktoken.get_encoding("cl100k_base")
+    return _ENCODING
+
+
 def count_tokens(text: str) -> int:
-    return len(ENCODING.encode(text))
+    return len(_get_encoding().encode(text))
 
 def count_eu_tokens(eu: EvidenceUnit) -> int:
     return count_tokens(eu.text)
