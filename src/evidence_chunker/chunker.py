@@ -109,7 +109,7 @@ def build_evidence_units(
     dup_drop_map = find_duplicate_tables(parsed)
     dup_donor_caption = {}
     for loser_idx, winner_idx in dup_drop_map.items():
-        donor_mapping = map_table_caption(doc, doc.tables[loser_idx], loser_idx)
+        donor_mapping = map_table_caption(parsed, parsed.tables[loser_idx], loser_idx)
         if donor_mapping.caption_text:
             dup_donor_caption[winner_idx] = donor_mapping
 
@@ -133,7 +133,7 @@ def build_evidence_units(
         eu_id = f"{doc_id}-p{pg}-{idx}"
 
         # ── 캡션 (RefItem 직접 연결 + bbox fallback, caption.py) ──
-        cap_mapping = map_table_caption(doc, table, table_index)
+        cap_mapping = map_table_caption(parsed, parsed.tables[table_index], table_index)
         if cap_mapping.confidence == "none" and table_index in dup_donor_caption:
             cap_mapping = dup_donor_caption[table_index]
         caption_text = cap_mapping.caption_text
