@@ -4,62 +4,43 @@
 배경:
     07_caption_table_mapping_poc.py로 검증한 실제 테스트 PDF(영어 논문 2 +
     한국어 보고서 + GPT-3, 표 23개) 어디에서도 multi_caption / cross_page 케이스가
-    실제로 발동한 적이 없었음. 실 데이터로 재현이 안 되므로 합성(mock) Docling
-    문서를 만들어 _caption_mapper.map_table_caption()의 예외 처리 분기를 직접 검증한다.
+    실제로 발동한 적이 없었음. 실 데이터로 재현이 안 되므로 합성(mock) 문서를
+    만들어 caption.map_table_caption()의 예외 처리 분기를 직접 검증한다.
 
-    Docling 실제 객체 대신, resolve_ref()가 기대하는 최소 인터페이스
-    (.model_dump() 반환, doc.texts / doc.tables 리스트)만 흉내낸 Fake 객체 사용.
+Stage 4 파서 추상화: 예전에는 model_dump() 인터페이스를 흉내낸 Fake*
+클래스(FakeItem/FakeTable/FakeDoc)를 썼는데, caption.py가 이제
+parser.base.ParsedDoc/TextBlock/TableBlock을 직접 받으므로 정식 모델을
+그대로 쓴다 — Fake 클래스는 필요 없어짐.
+
+좌표는 전부 TOPLEFT(파서 경계에서 정규화된 값. parser/base.py 참고):
+y가 작을수록 페이지 위쪽, 클수록 아래쪽. 원본 BOTTOMLEFT 테스트의 숫자를
+그대로 뒤집는 대신, 각 케이스가 뜻하는 물리적 배치(표 위/아래, 페이지
+경계)를 TOPLEFT로 새로 표현했다 — 산술 변환 실수보다 의미를 다시 쓰는
+쪽이 검증하기 쉽다.
 """
 from evidence_chunker.caption import map_table_caption
+from evidence_chunker.parser.base import BBox, BlockLabel, ParsedDoc, TableBlock, TextBlock
 
 
 # ---------------------------------------------------------------------------
-# Fake Docling 객체 (model_dump() 인터페이스만 흉내)
+# 빌더 헬퍼
 # ---------------------------------------------------------------------------
 
-class FakeItem:
-    def __init__(self, label, text, page_no, t, b, l=0.0, r=100.0):
-        self._d = {
-            "label": label,
-            "text": text,
-            "prov": [{"page_no": page_no, "bbox": {"l": l, "t": t, "r": r, "b": b}}],
-        }
-
-    def model_dump(self):
-        return self._d
+def _text(index: int, text: str, label: str, page_no: int, t: float, b: float, l: float = 0.0, r: float = 100.0) -> TextBlock:
+    return TextBlock(index=index, text=text, label=BlockLabel(label), page_no=page_no, bbox=BBox(l, t, r, b))
 
 
-class FakeTable:
-    def __init__(self, page_no, t, b, captions=None):
-        self._d = {
-            "prov": [{"page_no": page_no, "bbox": {"l": 0.0, "t": t, "r": 100.0, "b": b}}],
-            "captions": captions or [],
-        }
-
-    def model_dump(self):
-        return self._d
+def _table(page_no: int, t: float, b: float, caption_refs: list[int] | None = None) -> TableBlock:
+    return TableBlock(
+        index=0, page_no=page_no, bbox=BBox(0.0, t, 100.0, b),
+        cells=[], num_rows=0, num_cols=0, html=None,
+        caption_refs=caption_refs or [],
+    )
 
 
-class FakePage:
-    def __init__(self, height, width=612.0):
-        self._d = {"size": {"width": width, "height": height}}
-
-    def model_dump(self):
-        return self._d
-
-
-class FakeDoc:
-    def __init__(self, texts, tables=None, page_height=None):
-        self.texts = texts
-        self.tables = tables or []
-        # page_height가 주어지면 1~5페이지 모두 같은 크기라고 가정 (테스트 단순화용)
-        self.pages = (
-            {pg: FakePage(page_height) for pg in range(1, 6)} if page_height else {}
-        )
-
-    # resolve_ref()가 getattr(doc, "texts")[idx] 형태로 접근
-    def __getitem__(self, idx):
-        raise NotImplementedError
+def _parsed(texts: list[TextBlock], page_height: float | None = None) -> ParsedDoc:
+    page_sizes = {pg: (612.0, page_height) for pg in range(1, 6)} if page_height else {}
+    return ParsedDoc(texts=texts, tables=[], picture_caption_refs=set(), page_sizes=page_sizes)
 
 
 # ---------------------------------------------------------------------------
@@ -68,12 +49,12 @@ class FakeDoc:
 
 def test_no_caption():
     texts = [
-        FakeItem("text", "이 표는 실험 결과를 나타내지 않는다.", page_no=1, t=500, b=480),
+        _text(0, "이 표는 실험 결과를 나타내지 않는다.", "text", page_no=1, t=350, b=380),
     ]
-    doc = FakeDoc(texts=texts)
-    table = FakeTable(page_no=1, t=400, b=200, captions=[])
+    parsed = _parsed(texts)
+    table = _table(page_no=1, t=400, b=600, caption_refs=[])
 
-    m = map_table_caption(doc, table, table_index=0)
+    m = map_table_caption(parsed, table, table_index=0)
     assert m.confidence == "none"
     assert m.caption_text is None
     assert m.multi_caption is False
@@ -85,18 +66,17 @@ def test_no_caption():
 
 def test_multi_caption():
     texts = [
-        FakeItem("caption", "Table 1: 지역별 매출 비교", page_no=1, t=420, b=410),
-        FakeItem("caption", "표 1. (전년 대비 증감률 포함)", page_no=1, t=410, b=400),
+        _text(0, "Table 1: 지역별 매출 비교", "caption", page_no=1, t=370, b=390),
+        _text(1, "표 1. (전년 대비 증감률 포함)", "caption", page_no=1, t=390, b=400),
     ]
-    doc = FakeDoc(texts=texts)
-    captions = [{"cref": "#/texts/0"}, {"cref": "#/texts/1"}]
-    table = FakeTable(page_no=1, t=400, b=200, captions=captions)
+    parsed = _parsed(texts)
+    table = _table(page_no=1, t=400, b=600, caption_refs=[0, 1])
 
-    m = map_table_caption(doc, table, table_index=0)
+    m = map_table_caption(parsed, table, table_index=0)
     assert m.confidence == "direct"
     assert m.multi_caption is True
     assert "지역별 매출 비교" in m.caption_text and "전년 대비 증감률" in m.caption_text
-    assert "#/texts/0" in m.caption_ref and "#/texts/1" in m.caption_ref
+    assert "0" in m.caption_ref and "1" in m.caption_ref
 
 
 # ---------------------------------------------------------------------------
@@ -104,19 +84,18 @@ def test_multi_caption():
 # ---------------------------------------------------------------------------
 
 def test_caption_on_previous_page():
+    """표가 페이지 최상단에서 시작(near_top 게이트) -> 같은 페이지 bbox
+    fallback 실패 -> 이전 페이지 맨 아래(TOPLEFT: cy 최댓값)에서 재탐색."""
     texts = [
-        # 이전 페이지(1페이지) 맨 아래 두 줄 중 캡션 패턴에 맞는 것
-        FakeItem("text", "본문 마지막 문단입니다.", page_no=1, t=100, b=90),
-        FakeItem("caption", "Table 2: 국가별 GDP 성장률 추이", page_no=1, t=80, b=70),
-        # 같은 페이지(2페이지)엔 캡션 패턴 텍스트 없음
-        FakeItem("text", "표 아래 설명 텍스트", page_no=2, t=390, b=380),
+        _text(0, "본문 마지막 문단입니다.", "text", page_no=1, t=700, b=710),
+        _text(1, "Table 2: 국가별 GDP 성장률 추이", "caption", page_no=1, t=720, b=740),
+        _text(2, "표 아래 설명 텍스트", "text", page_no=2, t=390, b=400),
     ]
-    # 페이지 높이 800 기준, 표가 상위 15%(>=680) 안쪽에서 시작 -> 인접 페이지 탐색 게이트 통과
-    doc = FakeDoc(texts=texts, page_height=800.0)
-    # 같은 페이지 bbox fallback(200pt 이내)이 실패하도록 표 아래 텍스트와 충분히 멀리 둠
-    table = FakeTable(page_no=2, t=750, b=400, captions=[])
+    parsed = _parsed(texts, page_height=800.0)
+    # page_height 800 기준 near_top: table_top_y <= 120. 표가 페이지 2 최상단에서 시작.
+    table = _table(page_no=2, t=20, b=370, caption_refs=[])
 
-    m = map_table_caption(doc, table, table_index=1)
+    m = map_table_caption(parsed, table, table_index=1)
     assert m.confidence == "inferred"
     assert m.cross_page is True
     assert m.caption_text == "Table 2: 국가별 GDP 성장률 추이"
@@ -127,17 +106,17 @@ def test_caption_on_previous_page():
 # ---------------------------------------------------------------------------
 
 def test_caption_on_next_page():
+    """표가 페이지 최하단에서 끝남(near_bottom 게이트) -> 다음 페이지
+    맨 위(TOPLEFT: cy 최솟값)에서 재탐색."""
     texts = [
-        # 3페이지 맨 위에 캡션
-        FakeItem("caption", "Figure 3: 손실 함수 수렴 곡선", page_no=3, t=750, b=740),
-        FakeItem("text", "본문 이어지는 내용", page_no=3, t=700, b=690),
+        _text(0, "Figure 3: 손실 함수 수렴 곡선", "caption", page_no=3, t=40, b=60),
+        _text(1, "본문 이어지는 내용", "text", page_no=3, t=90, b=110),
     ]
-    # 페이지 높이 800 기준, 표가 하위 15%(<=120) 안쪽에서 끝남 -> 게이트 통과
-    doc = FakeDoc(texts=texts, page_height=800.0)
-    # 표가 2페이지 맨 아래(b=50)에서 끝남 -> 같은 페이지 bbox fallback 실패해야 함
-    table = FakeTable(page_no=2, t=200, b=50, captions=[])
+    parsed = _parsed(texts, page_height=800.0)
+    # near_bottom: table_bot_y >= 680. 표가 페이지 2 최하단에서 끝남.
+    table = _table(page_no=2, t=430, b=780, caption_refs=[])
 
-    m = map_table_caption(doc, table, table_index=2)
+    m = map_table_caption(parsed, table, table_index=2)
     assert m.confidence == "inferred"
     assert m.cross_page is True
     assert m.caption_text == "Figure 3: 손실 함수 수렴 곡선"
@@ -148,18 +127,17 @@ def test_caption_on_next_page():
 # ---------------------------------------------------------------------------
 
 def test_middle_of_page_ignores_adjacent_caption():
-    # 실제 버그 사례: GPT-3 논문에서 목차(ToC)가 표로 오인식된 케이스.
-    # 표가 페이지 중간~전체를 차지하는데, 다음 페이지에 있는 완전히 무관한
-    # "Figure 1.1" 캡션을 게이팅 없이는 잘못 채택했었음.
-
+    """실제 버그 사례: GPT-3 논문에서 목차(ToC)가 표로 오인식된 케이스.
+    표가 페이지 중간~전체를 차지하는데, 다음 페이지에 있는 완전히 무관한
+    캡션을 게이팅 없이는 잘못 채택했었음."""
     texts = [
-        FakeItem("caption", "Figure 9: 무관한 그림 설명", page_no=3, t=750, b=740),
+        _text(0, "Figure 9: 무관한 그림 설명", "caption", page_no=3, t=40, b=60),
     ]
-    doc = FakeDoc(texts=texts, page_height=800.0)
-    # 표가 페이지 중간을 차지(위/아래 15% 경계 밖) -> 인접 페이지 탐색 자체가 게이팅돼야 함
-    table = FakeTable(page_no=2, t=600, b=200, captions=[])
+    parsed = _parsed(texts, page_height=800.0)
+    # 표가 페이지 중간을 차지(near_top/near_bottom 둘 다 미충족) -> 게이팅돼야 함
+    table = _table(page_no=2, t=200, b=600, caption_refs=[])
 
-    m = map_table_caption(doc, table, table_index=3)
+    m = map_table_caption(parsed, table, table_index=3)
     assert m.confidence == "none"
     assert m.caption_text is None
     assert m.cross_page is False
@@ -170,25 +148,23 @@ def test_middle_of_page_ignores_adjacent_caption():
 # ---------------------------------------------------------------------------
 
 def test_narrative_paragraph_not_mistaken_for_caption():
-    # 실제 버그 사례: GPT-3 논문 부록 표(table[20], p47)에서 captions RefItem이
-    # 비어있어 bbox fallback이 발동했는데, 근처의 서술형 문단
-    # "This appendix contains the calculations ... Figure 2.2. As a simplifying ..."
-    # 전체가 캡션으로 잘못 채택됨 (문단 중간에 "Figure 2.2"가 우연히 있었음).
-
+    """실제 버그 사례: GPT-3 논문 부록 표에서 captions 참조가 비어있어
+    bbox fallback이 발동했는데, 근처의 서술형 문단 전체("... Figure 2.2 ...")가
+    캡션으로 잘못 채택됨 (문단 중간에 번호가 우연히 있었음)."""
     texts = [
-        FakeItem(
-            "text",
+        _text(
+            0,
             "This appendix contains the calculations that were used to derive "
             "the approximate compute used to train the language models in "
             "Figure 2.2. As a simplifying assumption, we ignore the attention "
             "operation, as it typically uses less than 10% of the total compute.",
-            page_no=5, t=390, b=350,
+            "text", page_no=5, t=350, b=390,
         ),
     ]
-    doc = FakeDoc(texts=texts)
-    table = FakeTable(page_no=5, t=400, b=200, captions=[])
+    parsed = _parsed(texts)  # page_height 없음 -> 인접 페이지 탐색 자체가 비활성
+    table = _table(page_no=5, t=400, b=600, caption_refs=[])
 
-    m = map_table_caption(doc, table, table_index=4)
+    m = map_table_caption(parsed, table, table_index=4)
     assert m.confidence == "none"
     assert m.caption_text is None
 
@@ -198,53 +174,42 @@ def test_narrative_paragraph_not_mistaken_for_caption():
 # ---------------------------------------------------------------------------
 
 def test_appendix_letter_number_caption():
-    # 실제 버그 사례: GPT-3 논문 부록(45~63p, 표 35개)이 전부 이 형식을 쓰는데,
-    # 숫자 앞 문자 하나를 정규식이 허용하지 않아 전부 "none"으로 빠졌었음.
-    # table[18]은 심지어 captions RefItem까지 정확히 있었는데도 놓쳤던 케이스.
-
+    """실제 버그 사례: GPT-3 논문 부록(45~63p, 표 35개)이 전부 이 형식을 쓰는데,
+    숫자 앞 문자 하나를 정규식이 허용하지 않아 전부 "none"으로 빠졌었음."""
     texts = [
-        FakeItem(
-            "caption",
-            "Table C.1: Overlap statistics for all datasets sorted from dirtiest to cleanest.",
-            page_no=45, t=650, b=630,
-        ),
+        _text(0, "Table C.1: Overlap statistics for all datasets sorted from dirtiest to cleanest.",
+              "caption", page_no=45, t=630, b=650),
     ]
-    doc = FakeDoc(texts=texts)
-    captions = [{"cref": "#/texts/0"}]
-    table = FakeTable(page_no=45, t=620, b=400, captions=captions)
+    parsed = _parsed(texts)
+    table = _table(page_no=45, t=650, b=850, caption_refs=[0])
 
-    m = map_table_caption(doc, table, table_index=0)
+    m = map_table_caption(parsed, table, table_index=0)
     assert m.confidence == "direct"
     assert m.caption_text == "Table C.1: Overlap statistics for all datasets sorted from dirtiest to cleanest."
 
 
 # ---------------------------------------------------------------------------
-# 케이스 3f (3-13): captions RefItem이 그림(Figure) 캡션을 direct로 가리키는 경우
+# 케이스 3f (3-13): captions 참조가 그림(Figure) 캡션을 direct로 가리키는 경우
 # ---------------------------------------------------------------------------
 
 def test_direct_ref_pointing_to_figure_caption_is_downgraded():
-    # 실제 버그 사례: ieee1.pdf에서 표의 captions RefItem이 "Fig. 3. Framework of
-    # ISAC technologies..."를 가리키는데도 confidence="direct"로 확정돼버렸음.
-    # interfaces.py의 EU가 이 잘못된 캡션을 모든 하위 유닛(행/문맥/주석)에 접두사로
-    # 증폭시키면서 Recall -48.5pp 붕괴로 이어졌던 사고(3-11/3-12 참고).
-    #
-    # 수정: direct RefItem 검증은 _looks_like_table_caption(table/표 전용)을 쓴다.
-    # 그림 캡션은 direct로 인정되지 않고 bbox fallback으로 넘어가며, fallback은
-    # 기존 넓은 패턴을 그대로 쓰므로 텍스트 자체는 잃지 않고 confidence만
-    # "direct" -> "inferred"로 정직해진다.
+    """실제 버그 사례: ieee1.pdf에서 표의 captions 참조가 "Fig. 3. Framework of
+    ISAC technologies..."를 가리키는데도 confidence="direct"로 확정돼버렸음.
+    EvidenceUnit이 이 잘못된 캡션을 모든 하위 유닛(행/문맥/주석)에 접두사로
+    증폭시키면서 Recall -48.5pp 붕괴로 이어졌던 사고(3-11/3-12 참고).
 
+    수정: direct 참조 검증은 _looks_like_table_caption(table/표 전용)을 쓴다.
+    그림 캡션은 direct로 인정되지 않고 bbox fallback으로 넘어가며, fallback은
+    기존 넓은 패턴을 그대로 쓰므로 텍스트 자체는 잃지 않고 confidence만
+    "direct" -> "inferred"로 정직해진다."""
     texts = [
-        FakeItem(
-            "caption",
-            "Fig. 3. Framework of ISAC technologies for future wireless systems.",
-            page_no=1, t=420, b=410,
-        ),
+        _text(0, "Fig. 3. Framework of ISAC technologies for future wireless systems.",
+              "caption", page_no=1, t=370, b=390),
     ]
-    doc = FakeDoc(texts=texts)
-    captions = [{"cref": "#/texts/0"}]
-    table = FakeTable(page_no=1, t=400, b=200, captions=captions)
+    parsed = _parsed(texts)
+    table = _table(page_no=1, t=400, b=600, caption_refs=[0])
 
-    m = map_table_caption(doc, table, table_index=0)
+    m = map_table_caption(parsed, table, table_index=0)
     # direct로 잘못 신뢰하지 않음
     assert m.confidence == "inferred"
     # caption_text는 bbox fallback으로 보존됨 (정보 손실 없음)
@@ -256,31 +221,26 @@ def test_direct_ref_pointing_to_figure_caption_is_downgraded():
 def test_direct_ref_to_real_table_caption_unaffected():
     """회귀 방지: 정상 표 캡션은 3-13 이후에도 direct 유지."""
     texts = [
-        FakeItem("caption", "Table 5: 정상 표 캡션입니다.", page_no=1, t=420, b=410),
+        _text(0, "Table 5: 정상 표 캡션입니다.", "caption", page_no=1, t=370, b=390),
     ]
-    doc = FakeDoc(texts=texts)
-    captions = [{"cref": "#/texts/0"}]
-    table = FakeTable(page_no=1, t=400, b=200, captions=captions)
+    parsed = _parsed(texts)
+    table = _table(page_no=1, t=400, b=600, caption_refs=[0])
 
-    m = map_table_caption(doc, table, table_index=0)
+    m = map_table_caption(parsed, table, table_index=0)
     assert m.confidence == "direct"
     assert m.caption_text == "Table 5: 정상 표 캡션입니다."
 
 
 def test_multi_caption_excludes_figure_fragment():
     """3-13 부수 효과: 복수 캡션 중 그림 캡션 파편은 병합에서 제외."""
-    # 3-13 이전에는 "Table 7: 진짜 표 캡션" + "Fig 7a. 잘못 섞여 들어온 그림 참조"가
-    # 둘 다 캡션처럼 보여서 caption_text에 함께 병합됐을 것. 이제는 표 패턴만 인정.
-
     texts = [
-        FakeItem("caption", "Table 7: 진짜 표 캡션", page_no=1, t=420, b=410),
-        FakeItem("caption", "Fig 7a. 잘못 섞여 들어온 그림 참조", page_no=1, t=410, b=400),
+        _text(0, "Table 7: 진짜 표 캡션", "caption", page_no=1, t=370, b=390),
+        _text(1, "Fig 7a. 잘못 섞여 들어온 그림 참조", "caption", page_no=1, t=390, b=400),
     ]
-    doc = FakeDoc(texts=texts)
-    captions = [{"cref": "#/texts/0"}, {"cref": "#/texts/1"}]
-    table = FakeTable(page_no=1, t=400, b=200, captions=captions)
+    parsed = _parsed(texts)
+    table = _table(page_no=1, t=400, b=600, caption_refs=[0, 1])
 
-    m = map_table_caption(doc, table, table_index=0)
+    m = map_table_caption(parsed, table, table_index=0)
     assert m.confidence == "direct"
     assert m.caption_text == "Table 7: 진짜 표 캡션"
     assert m.multi_caption is True
