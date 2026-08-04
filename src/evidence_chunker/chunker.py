@@ -85,10 +85,11 @@ def build_evidence_units(
     from .filters import find_duplicate_tables, is_toc_or_lof_decoy
     from .parser.docling import DoclingParser
 
-    # filters.py는 Stage 4에서 ParsedDoc 기반으로 전환됨 — 아직 caption.py/
-    # context.py는 raw DoclingDocument를 그대로 쓰므로, 이 함수는 당분간
-    # 두 가지를 동시에 들고 간다. 재파싱은 아니라 from_doc()이 이미 파싱된
-    # doc을 순회만 하는 가벼운 변환임.
+    # caption.py/context.py/filters.py는 전부 Stage 4에서 ParsedDoc 기반으로
+    # 전환됨. 이 함수(chunker.py)만 EvidenceUnit.bbox(BOTTOMLEFT 유지가
+    # 공개 계약, 아래 get_prov 사용부 참고)를 위해 raw doc도 같이 들고
+    # 있다. 재파싱은 아니라 from_doc()이 이미 파싱된 doc을 순회만 하는
+    # 가벼운 변환임.
     parsed = DoclingParser().from_doc(doc)
 
     page_sizes: dict[int, dict] = {}
@@ -238,6 +239,7 @@ class EvidenceChunker:
             List[EvidenceUnit]
         """
         pdf_path = str(pdf_path)
+        doc_id = doc_id or Path(pdf_path).stem
         doc = self._parse(pdf_path)
         eu_list = build_evidence_units(doc, self.bbox_threshold, self.sim_threshold, doc_id)
         return split_oversized_units(eu_list)
@@ -261,19 +263,22 @@ class EvidenceChunker:
 
         Returns:
             List[RetrievalChunk] — EvidenceUnit(표)과 export.TextChunk(일반
-            본문)이 섞인 리스트. 둘 다 chunk_id/text/retrieval_text/
+            본문)이 섞인 리스트. 둘 다 chunk_id/is_atomic/text/retrieval_text/
             retrieval_units/metadata를 노출하므로 export.to_langchain() 등에
-            타입 구분 없이 그대로 넘기면 됨. chunk_id가 None인 항목이 일반
+            타입 구분 없이 그대로 넘기면 됨. is_atomic=True인 항목이 일반
             본문 청크(EU 아님)를 뜻한다.
         """
         from .export import TextChunk
 
         pdf_path = str(pdf_path)
+        doc_id = doc_id or Path(pdf_path).stem
         doc = self._parse(pdf_path)
         eu_list = build_evidence_units(doc, self.bbox_threshold, self.sim_threshold, doc_id)
         eu_list = split_oversized_units(eu_list)
         text_chunks = self._build_text_chunks(doc, eu_list)
-        return eu_list + [TextChunk(c) for c in text_chunks]
+        return eu_list + [
+            TextChunk(c, doc_id, i) for i, c in enumerate(text_chunks)
+        ]
 
     def _build_text_chunks(self, doc, eu_list: list[EvidenceUnit]) -> list:
         """

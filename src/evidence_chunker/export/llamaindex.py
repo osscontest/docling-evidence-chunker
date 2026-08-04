@@ -22,21 +22,19 @@ def to_llamaindex(chunks: list["RetrievalChunk"]) -> list["LlamaIndexTextNode"]:
     RetrievalChunk 리스트 → LlamaIndex TextNode 리스트 (1 chunk = 1 TextNode).
     LlamaIndex RAG 파이프라인에 넘길 때 사용.
 
-    chunk_id가 있으면(EvidenceUnit) 그 값을 TextNode.id_로 명시 지정한다.
-    chunk_id가 없으면(TextChunk, 표와 무관한 일반 청크) id_를 지정하지
-    않아 LlamaIndex가 자동 생성하게 둔다 — 표 청크만 eu_id로 안정적으로
-    추적할 대상이고, 일반 청크는 원래도 식별자를 부여하지 않았음.
+    chunk.chunk_id를 TextNode.id_로 명시 지정한다. EvidenceUnit(eu_id)과
+    export.TextChunk("{doc_id}-hybrid-{index}") 둘 다 항상 안정적인 값을
+    주므로(예전엔 TextChunk의 chunk_id가 항상 None이라 LlamaIndex가 자동
+    생성하는 임시 id에 의존했음 — PDF 여러 개를 합치면 일반 본문 청크의
+    출처를 구분할 방법이 없었던 실사용 버그), 무조건 지정한다.
     """
     if LlamaIndexTextNode is None:
         raise ImportError("llama-index-core is not installed. pip install llama-index-core")
 
-    nodes = []
-    for c in chunks:
-        kwargs = {"text": c.text, "metadata": dict(c.metadata)}
-        if c.chunk_id is not None:
-            kwargs["id_"] = c.chunk_id
-        nodes.append(LlamaIndexTextNode(**kwargs))
-    return nodes
+    return [
+        LlamaIndexTextNode(text=c.text, metadata=dict(c.metadata), id_=c.chunk_id)
+        for c in chunks
+    ]
 
 
 def to_llamaindex_units(chunks: list["RetrievalChunk"]) -> list["LlamaIndexTextNode"]:
@@ -50,8 +48,8 @@ def to_llamaindex_units(chunks: list["RetrievalChunk"]) -> list["LlamaIndexTextN
 
     nodes = []
     for c in chunks:
-        if c.chunk_id is None:
-            nodes.append(LlamaIndexTextNode(text=c.text, metadata=dict(c.metadata)))
+        if c.is_atomic:
+            nodes.append(LlamaIndexTextNode(text=c.text, metadata=dict(c.metadata), id_=c.chunk_id))
             continue
 
         base_metadata = {k: v for k, v in c.metadata.items() if k != "retrieval_text"}

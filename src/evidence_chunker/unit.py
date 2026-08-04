@@ -323,6 +323,17 @@ class EvidenceUnit:
         return self.eu_id
 
     @property
+    def is_atomic(self) -> bool:
+        """export.to_*_units()가 이 chunk를 retrieval_units 단위로 쪼갤지 판단하는 신호.
+
+        EvidenceUnit은 항상 쪼갤 수 있는 대상이라 False — retrieval_units가
+        우연히 1개뿐이어도(작은 표 등) 예전부터 "쪼개는 취급"이었으므로
+        그 동작을 그대로 유지한다. export.TextChunk(표와 무관한 일반 청크,
+        그 자체로 최소 단위)만 True.
+        """
+        return False
+
+    @property
     def metadata(self) -> dict:
         """LangChain/LlamaIndex 문서 메타데이터 (retrieval_text 포함, whole-chunk 모드용).
 
@@ -331,6 +342,7 @@ class EvidenceUnit:
         """
         return {
             "eu_id": self.eu_id,
+            "doc_id": self.doc_id,
             "page_no": self.page_no,
             "section_header": self.section_header,
             "caption_text": self.caption_text,

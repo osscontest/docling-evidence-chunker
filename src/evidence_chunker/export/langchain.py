@@ -46,12 +46,13 @@ def to_langchain_units(chunks: list["RetrievalChunk"]) -> list["LangChainDocumen
     특정 셀 값을 묻는 질의는 같은 표의 나머지 행 데이터에 묻혀 코사인
     유사도에서 밀리는 문제가 있다 (EvidenceUnit.retrieval_units 참고).
 
-    chunk_id가 있는(=EvidenceUnit) chunk만 retrieval_units 단위로 쪼갠다.
-    chunk_id가 없는(=TextChunk, 표와 무관한 일반 청크) 항목은 그 자체가
+    is_atomic=False인(=EvidenceUnit) chunk만 retrieval_units 단위로 쪼갠다.
+    is_atomic=True인(=TextChunk, 표와 무관한 일반 청크) 항목은 그 자체가
     이미 최소 단위라 쪼갤 게 없으므로 to_langchain()과 동일하게 1개 그대로
     반환 — retrieval_units가 [text] 하나뿐이라 쪼개도 결과는 같지만,
     metadata에 parent_text가 잘못 붙는 걸 막기 위해 분기한다(원본 일반
-    청크에는 parent_text 개념이 없음).
+    청크에는 parent_text 개념이 없음). chunk_id는 이제 TextChunk도 채워져
+    있어(문서 출처 구분용) None 여부로는 더 이상 구분할 수 없다.
 
     벡터스토어에는 이 작은 Document들을 넣어서 검색 정밀도를 높이고,
     실제 LLM에 넘길 때는 page_content(작은 조각) 대신
@@ -62,7 +63,7 @@ def to_langchain_units(chunks: list["RetrievalChunk"]) -> list["LangChainDocumen
 
     docs = []
     for c in chunks:
-        if c.chunk_id is None:
+        if c.is_atomic:
             docs.append(LangChainDocument(page_content=c.text, metadata=dict(c.metadata)))
             continue
 

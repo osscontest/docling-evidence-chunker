@@ -17,6 +17,7 @@ from typing import Protocol, runtime_checkable
 @runtime_checkable
 class RetrievalChunk(Protocol):
     chunk_id: str | None
+    is_atomic: bool
     text: str
     retrieval_text: str
     retrieval_units: list[str]
@@ -28,23 +29,28 @@ class TextChunk:
     표와 무관한 일반 본문 청크(Docling HybridChunker가 만든 chunk)를
     RetrievalChunk 프로토콜에 맞춰 감싼 래퍼.
 
-    chunk_id가 항상 None인 게 EvidenceUnit과의 유일한 구조적 차이 —
-    export의 to_*_units() 함수들이 이 값으로 "쪼갤 대상(EU)인지 아닌지"를
-    구분한다 (일반 청크는 애초에 그 자체로 최소 단위라 쪼갤 게 없음).
+    doc_id/index를 받아 chunk_id를 "{doc_id}-hybrid-{index}" 형태로 채운다
+    (예전엔 chunk_id가 항상 None이라, PDF 여러 개를 build_corpus()로
+    합치면 일반 본문 청크끼리 서로 구별이 안 되는 실사용 버그가 있었음 —
+    page_no도 문서 간 충돌함). is_atomic=True가 EvidenceUnit과의 실질적
+    차이 — export의 to_*_units() 함수들이 이 값으로 "쪼갤 대상인지"를
+    구분한다(일반 청크는 애초에 그 자체로 최소 단위라 쪼갤 게 없음).
+    chunk_id가 채워진 뒤로는 그 값(None 여부)으로 구분할 수 없어졌다.
     """
 
-    def __init__(self, chunk) -> None:
+    def __init__(self, chunk, doc_id: str, index: int) -> None:
         self.text = chunk.text
         self.retrieval_text = chunk.text
         self.retrieval_units = [chunk.text]
-        self.chunk_id: str | None = None
+        self.chunk_id = f"{doc_id}-hybrid-{index}"
+        self.is_atomic = True
 
         page_no = None
         try:
             page_no = chunk.meta.doc_items[0].prov[0].page_no
         except (AttributeError, IndexError):
             pass
-        self.metadata = {"eu_id": None, "page_no": page_no, "source": "hybrid"}
+        self.metadata = {"eu_id": None, "doc_id": doc_id, "page_no": page_no, "source": "hybrid"}
 
 
 # ---------------------------------------------------------------------------
