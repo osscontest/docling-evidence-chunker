@@ -72,6 +72,27 @@ class TableBlock:
     caption_refs: list[int] = field(default_factory=list)   # texts 인덱스
     footnote_refs: list[int] = field(default_factory=list)  # texts 인덱스
 
+    def num_data_rows(self) -> int:
+        """헤더 행을 제외한 데이터 행 개수. export_to_dataframe().shape[0]과
+        같은 기준 — last_column_values()는 빈 텍스트 행을 걸러내서 개수가
+        줄어들 수 있으므로(마지막 열이 빈 행이 있는 경우), min_rows류
+        게이트에는 이쪽을 쓸 것.
+
+        행 단위로 헤더를 판정한다(그 행에 column_header 셀이 하나라도
+        있으면 헤더 행) — 셀 단위로 판정하면 다단 헤더 표의 좌상단 모서리
+        셀(예: "CPU")이 column_header=False로 찍힌 경우를 데이터 행으로
+        잘못 셈(실측: docling_technical_report.pdf table[0]에서 헤더 2행 중
+        1행이 이렇게 새서 3으로 잘못 나왔고, pandas export_to_dataframe()는
+        2였음 — 셀 단위 판정 대신 행 단위로 바꿔서 일치시킴).
+        """
+        all_rows: dict[int, bool] = {}
+        for c in self.cells:
+            row = c.get("start_row_offset_idx")
+            if row is None:
+                continue
+            all_rows[row] = all_rows.get(row, False) or bool(c.get("column_header"))
+        return sum(1 for is_header in all_rows.values() if not is_header)
+
     def last_column_values(self) -> list[str]:
         """마지막 열의 셀 값(행 순서). filters.is_toc_or_lof_decoy 전용.
 
