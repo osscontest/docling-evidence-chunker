@@ -173,7 +173,12 @@ def build_evidence_units(
         # ── 섹션 헤더 + 인접 단락 (bbox 거리 + 임베딩 유사도, context.py) ──
         # table_bbox를 직접 넘김: eu_id의 페이지 내 순번은 dedup으로 doc.tables의
         # 스캔 순서와 어긋날 수 있어, eu_id 기반 재추정에 맡기면 안 됨.
-        attach_context_paragraphs(eu, doc, bbox_threshold, sim_threshold, table_bbox=bbox)
+        # parsed.tables[table_index].bbox(TOPLEFT 정규화됨)를 넘긴다 — raw
+        # bbox(BOTTOMLEFT dict, normalize_bbox()용으로 위에서 이미 씀)가 아님.
+        attach_context_paragraphs(
+            eu, parsed, bbox_threshold, sim_threshold,
+            table_bbox=parsed.tables[table_index].bbox,
+        )
 
         # ── Row Flattening + 다단 헤더 처리 ─────────────────────────
         data = t_dict.get("data", {})
