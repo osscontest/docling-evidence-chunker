@@ -224,6 +224,7 @@ def split_eu(
                 EvidenceUnit(
                     eu_id=f"{eu.eu_id}-s{split_idx}",
                     page_no=eu.page_no,
+                    doc_id=eu.doc_id,
                     section_header=eu.section_header,
                     caption_text=eu.caption_text,
                     table_html=chunk_html,
@@ -264,6 +265,7 @@ def split_eu(
             EvidenceUnit(
                 eu_id=f"{eu.eu_id}-s{split_idx}",
                 page_no=eu.page_no,
+                doc_id=eu.doc_id,
                 section_header=eu.section_header,
                 caption_text=eu.caption_text,
                 table_html=chunk_html,

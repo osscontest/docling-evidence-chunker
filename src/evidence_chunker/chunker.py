@@ -79,7 +79,11 @@ def build_evidence_units(
     doc,
     bbox_threshold: float = 300.0,
     sim_threshold: float = 0.40,
+    doc_id: str | None = None,
 ) -> list[EvidenceUnit]:
+    if doc_id is None:
+        doc_id = getattr(doc, "name", None) or "doc"
+
     from .geometry import normalize_bbox
     from .context import attach_context_paragraphs
     from .caption import map_table_caption
@@ -122,7 +126,7 @@ def build_evidence_units(
 
         idx = page_counters.get(pg, 0)
         page_counters[pg] = idx + 1
-        eu_id = f"eu-p{pg}-{idx}"
+        eu_id = f"{doc_id}-p{pg}-{idx}"
 
         # ── 캡션 (RefItem 직접 연결 + bbox fallback, caption.py) ──
         cap_mapping = map_table_caption(doc, table, table_index)
@@ -154,6 +158,7 @@ def build_evidence_units(
         eu = EvidenceUnit(
             eu_id=eu_id,
             page_no=pg,
+            doc_id=doc_id,
             caption_text=caption_text,
             table_html=table_html,
             footnote_text=footnote_text,
@@ -226,12 +231,17 @@ class SmartChunker:
             "eu", "langchain", "llamaindex", "langchain_units", "llamaindex_units"
         ] = "eu",
         include_text: bool = True,
+        doc_id: str | None = None,
     ) -> list:
         """
         PDF를 Evidence Unit(+ 필요시 일반 본문)으로 청킹.
 
         Args:
             pdf_path: PDF 파일 경로
+            doc_id:   문서 식별자. 기본은 파일명 stem(예: "paper.pdf" → "paper").
+                      PDF 여러 개를 한 벡터스토어에 넣을 때 eu_id 충돌(서로 다른
+                      문서의 "eu-p3-0" 같은 것)을 막는 접두사로 쓰인다. 같은
+                      파일명이 다른 디렉터리에 있을 수 있으면 직접 지정할 것.
             output:   반환 타입
                       "eu"               → List[EvidenceUnit] (표만. include_text 무시)
                       "langchain"        → List[LangChainDocument] (EU 1개 = Document 1개)
@@ -257,7 +267,7 @@ class SmartChunker:
         """
         pdf_path = str(pdf_path)
         doc = self._parse(pdf_path)
-        eu_list = build_evidence_units(doc, self.bbox_threshold, self.sim_threshold)
+        eu_list = build_evidence_units(doc, self.bbox_threshold, self.sim_threshold, doc_id)
         eu_list = split_oversized_units(eu_list)
 
         if output == "eu":

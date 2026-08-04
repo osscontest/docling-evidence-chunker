@@ -215,27 +215,27 @@ def main():
     # (행이 뭉개진 채 캡션만 연결된 표 + 행이 올바르게 분리됐지만 캡션이 없는 표).
     # build_evidence_units()의 find_duplicate_tables() dedup으로 더 세밀하게
     # 구조화된(행이 분리된) 쪽만 남기고 캡션을 물려주므로, 8페이지 표는 이제
-    # eu-p8-0 하나로 합쳐짐.
+    # docling_technical_report-p8-0 하나로 합쳐짐.
     qa_set = [
         {
             "question": "What is the TTS of Intel Xeon with 4 threads using native backend?",
-            "answer_eu_prefix": "eu-p5-0",  # Table 1
+            "answer_eu_prefix": "docling_technical_report-p5-0",  # Table 1
         },
         {
             "question": "What is the runtime characteristics table about?",
-            "answer_eu_prefix": "eu-p5-0",  # Table 1
+            "answer_eu_prefix": "docling_technical_report-p5-0",  # Table 1
         },
         {
             "question": "What is the mAP of YOLOv5 on DocLayNet?",
-            "answer_eu_prefix": "eu-p8-0",  # Table 2 (dedup 후 유일한 8페이지 표)
+            "answer_eu_prefix": "docling_technical_report-p8-0",  # Table 2 (dedup 후 유일한 8페이지 표)
         },
         {
             "question": "Which models were used for baseline experiments on DocLayNet?",
-            "answer_eu_prefix": "eu-p8-0",  # Table 2 (dedup 후 유일한 8페이지 표)
+            "answer_eu_prefix": "docling_technical_report-p8-0",  # Table 2 (dedup 후 유일한 8페이지 표)
         },
         {
             "question": "What are the pages per second for pypdfium backend with 16 threads?",
-            "answer_eu_prefix": "eu-p5-0",  # Table 1
+            "answer_eu_prefix": "docling_technical_report-p5-0",  # Table 1
         },
     ]
 
