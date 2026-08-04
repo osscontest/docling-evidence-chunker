@@ -85,6 +85,12 @@ LlamaIndex는 `evidence_chunker.export.llamaindex`의 `to_llamaindex` / `to_llam
 
 **한계**: 문서 1종·질문 5개짜리 표본이라 각 행이 통계적으로 유의하다고 주장하기 어렵다. 질문 하나가 뒤집히면 20%p씩 흔들린다 — 문서 3종·질문 24개로 확장한 `benchmarks/measure_recall_multi.py`가 있지만, 필요한 PDF 중 2종(16p, 75p)이 아래 "알려진 이슈"의 메모리 문제로 파싱이 안 돼 아직 전체 실행 결과가 없다. rerank/bge/e5가 전부 minilm보다 나쁘게 나온 것도 "이 조합에서는" 그렇다는 것이지 일반적 우위 주장이 아니다.
 
+## Docling 의존성
+
+파싱은 Docling을 쓰지만, 알고리즘은 Docling에 의존하지 않는다. `caption` / `context` / `filters` / `flatten` 모듈은 내부 문서 모델(`ParsedDoc`)만 다루며, Docling import를 차단한 상태에서 테스트가 통과한다 (`tests/test_no_docling_dependency.py`, CI에서 매 커밋 검증).
+
+다른 파서를 붙이려면 `PdfParser` 프로토콜의 `parse()` 하나만 구현하면 된다.
+
 ## 알고리즘
 
 ### 캡션↔표 매핑 (`evidence_chunker.caption`)
@@ -151,10 +157,14 @@ mapping = map_table_caption(doc, table, table_index)
 
 `flattened_rows`, `table_abstract`를 EvidenceUnit 인터페이스에 계속 포함할지, 별도 모듈로 뺄지 아직 논의 중 (현재는 포함된 상태 유지).
 
-### `table_abstract`의 유사도-레퍼런스 폴백이 아직 도달하지 않음
+### 검증 데이터 부족으로 미확정인 항목들
 
-`context.py`의 `attach_context_paragraphs`는 캡션이 없는 표에서 `table_abstract`를 유사도 필터의 레퍼런스 텍스트로 쓰도록 설계돼 있으나, EU 빌더의 현재 호출 순서(`attach_context_paragraphs` → `table_abstract` 계산)상 이 경로에 실제로 도달하지 않음 — 이 순서는 벤치마크 수치(Recall@1 0.80)를 만든 구현을 그대로 채택한 결과. 순서를 바꾸면 이 폴백은 살아나지만 대신 `table_abstract`에 섹션 헤더가 포함되지 않게 되는 트레이드오프가 있고(순환 의존), 검증하려면 캡션 없는 표가 있는 PDF가 필요함. 현재 파싱 가능한 두 PDF(9p, 15p) 모두 캡션 없는 표가 0개라 검증 수단이 없어 보류 — 검증 데이터 확보 후 처리 예정.
+- **`table_abstract`의 유사도-레퍼런스 폴백**: `context.py`의 `attach_context_paragraphs`는 캡션이 없는 표에서 `table_abstract`를 유사도 필터의 레퍼런스 텍스트로 쓰도록 설계돼 있으나, EU 빌더의 현재 호출 순서상 이 경로에 실제로 도달하지 않는다. 순서를 바꾸면 폴백은 살아나지만 대신 `table_abstract`에 섹션 헤더가 빠지는 트레이드오프가 있고(순환 의존), 캡션 없는 표가 있는 PDF로만 검증 가능하다.
+- **`is_toc_or_lof_decoy`의 헤더 행 판정 수정**: 셀 단위 판정을 행 단위로 고쳤다(다단 헤더 표에서 오판하던 버그, Stage 4에서 발견). 현재 검증 PDF에는 이 수정으로 최종 판정(decoy 여부)이 갈리는 표가 없다 — `min_rows`와 `numeric_ratio` 두 게이트가 각각 다른 이유로 이미 차단하고 있어서, 수정 전후 결과가 우연히 같다. 즉 두 게이트 중 어느 쪽이 "통과시켜야 할 걸 실제로 통과시키는지"는 아직 검증되지 않았다.
+- **15페이지 초과 PDF**: 아래 메모리 이슈로 자동 벤치마크에 아직 못 포함시킴.
+
+위 세 항목은 모두 파싱 가능한 검증 PDF가 2종(9p, 15p)뿐인 데서 온다. Docling 파이프라인의 메모리 거동(누적 2.3GB 부근에서 `std::bad_alloc`, 아래 항목 참고)이 더 큰/다양한 문서의 검증을 막고 있으며, 이것이 현재 가장 우선순위 높은 미해결 과제다.
 
 ### `to_llamaindex`/`to_llamaindex_units` 출력 diff 미검증
 
-`langchain`/`langchain_units` 경로는 리팩터링 전후 코퍼스 스냅샷으로 완전 일치를 확인했으나, `llama-index-core`가 개발 환경에 설치돼 있지 않아 `to_llamaindex`/`to_llamaindex_units`는 import 구조와 `ImportError` 경로만 확인했고 실제 출력 검증은 못 함.
+위 항목들과 원인이 다르다 — PDF가 아니라 `llama-index-core`가 개발 환경에 설치돼 있지 않아서다. `langchain`/`langchain_units` 경로는 리팩터링 전후 코퍼스 스냅샷으로 완전 일치를 확인했으나, `to_llamaindex`/`to_llamaindex_units`는 import 구조와 `ImportError` 경로만 확인했고 실제 출력 검증은 못 함.

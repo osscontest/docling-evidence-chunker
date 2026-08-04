@@ -90,7 +90,14 @@ class EvidenceUnit:
     # ------------------------------------------------------------------
     bbox: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
     # 표 위치 (x1, y1, x2, y2), 0~1 normalized
-    # Docling 원본은 PDF 포인트(BOTTOMLEFT) → bbox_utils.normalize_bbox()로 변환해서 저장
+    # Docling 원본은 PDF 포인트(BOTTOMLEFT) → geometry.normalize_bbox()로 변환해서 저장
+    #
+    # 주의: 패키지 내부(parser.base.BBox, caption.py/context.py가 쓰는 좌표)는
+    # Stage 4부터 TOPLEFT로 정규화돼 있다 — 이 필드(EvidenceUnit.bbox)만
+    # 예외적으로 BOTTOMLEFT를 유지한다(공개 API 필드라 기존 소비자의 계약을
+    # 바꾸지 않기 위한 의도적 결정). 패키지 안에 좌표계가 두 개 공존하니,
+    # parser.base.BBox 값을 그대로 이 필드에 넣지 말 것 — 반드시
+    # geometry.normalize_bbox()를 거칠 것.
 
     # ------------------------------------------------------------------
     # 분할
