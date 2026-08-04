@@ -8,11 +8,18 @@ EU 생성 대상에서 표를 제외해야 하는 케이스 감지.
                             케이스 탐지 (W4 Recall@1 회귀 원인 중 하나)
   - is_toc_or_lof_decoy   : 목차(ToC)/그림·표 목록(LoF)이 표로 오인식된 경우 감지
                             (v03 p3 필터. 실측 근거: context_dependent_maxpooling_실험.md 11절)
+
+parser.base.ParsedDoc/TableBlock 기반 — Docling DoclingDocument를 직접
+만지지 않는다 (Stage 4 파서 추상화).
 """
 from __future__ import annotations
 
 import re
 from collections import defaultdict
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .parser.base import ParsedDoc, TableBlock
 
 # ---------------------------------------------------------------------------
 # 1. 중복 표 감지 (W4 Recall@1 회귀 원인 #2)
@@ -36,7 +43,7 @@ def _cell_text_signature(cells: list[dict]) -> set[str]:
     return tokens
 
 
-def find_duplicate_tables(doc, overlap_ratio: float = 0.6) -> dict[int, int]:
+def find_duplicate_tables(parsed: "ParsedDoc", overlap_ratio: float = 0.6) -> dict[int, int]:
     """
     같은 페이지 내 표 쌍의 셀 텍스트 중복도로 중복 TableItem 감지.
 
@@ -51,23 +58,17 @@ def find_duplicate_tables(doc, overlap_ratio: float = 0.6) -> dict[int, int]:
     구조화된) 쪽만 남긴다.
 
     Returns:
-        {제거할 표의 doc.tables 인덱스: 남길 표의 doc.tables 인덱스}
+        {제거할 표의 parsed.tables 인덱스: 남길 표의 parsed.tables 인덱스}
     """
     pages: dict[int, list[int]] = defaultdict(list)
-    for i, table in enumerate(doc.tables):
-        d = table.model_dump()
-        prov = d.get("prov", [])
-        if not prov:
-            continue
-        pages[prov[0].get("page_no", -1)].append(i)
+    for table in parsed.tables:
+        pages[table.page_no].append(table.index)
 
     signatures: dict[int, set[str]] = {}
     row_counts: dict[int, int] = {}
-    for i, table in enumerate(doc.tables):
-        d = table.model_dump()
-        data = d.get("data", {})
-        signatures[i] = _cell_text_signature(data.get("table_cells", []))
-        row_counts[i] = data.get("num_rows", 0)
+    for table in parsed.tables:
+        signatures[table.index] = _cell_text_signature(table.cells)
+        row_counts[table.index] = table.num_rows
 
     drop_map: dict[int, int] = {}
     for idxs in pages.values():
@@ -101,27 +102,24 @@ P3_MIN_ROWS = 3
 P3_HEADER_KEYWORDS = ("content", "list of table", "list of figure")
 
 
-def _has_toc_like_header(doc, page_no: int) -> bool:
+def _has_toc_like_header(parsed: "ParsedDoc", page_no: int) -> bool:
     """표 바로 앞(같은 페이지 또는 이전 페이지)에 ToC/LoF 계열 헤더가 있는지."""
-    for item in doc.texts:
-        d = item.model_dump()
-        if d.get("label") != "section_header":
+    from .parser.base import BlockLabel
+
+    for item in parsed.texts:
+        if item.label != BlockLabel.SECTION_HEADER:
             continue
-        prov = d.get("prov", [])
-        if not prov:
+        if item.page_no not in (page_no, page_no - 1):
             continue
-        pg = prov[0].get("page_no")
-        if pg not in (page_no, page_no - 1):
-            continue
-        text = d.get("text", "").strip().lower()
+        text = item.text.strip().lower()
         if any(kw in text for kw in P3_HEADER_KEYWORDS):
             return True
     return False
 
 
 def is_toc_or_lof_decoy(
-    doc,
-    table,
+    parsed: "ParsedDoc",
+    table: "TableBlock",
     max_page: int = P3_MAX_PAGE,
     numeric_ratio_threshold: float = P3_NUMERIC_RATIO_THRESHOLD,
     min_rows: int = P3_MIN_ROWS,
@@ -132,24 +130,13 @@ def is_toc_or_lof_decoy(
     (baseline=HybridChunker 청킹에는 영향 주지 않음 — 호출자가
     doc.tables를 필터링 전후로 원복해서 사용할 것).
     """
-    prov = table.model_dump().get("prov", [])
-    if not prov:
-        return False
-    page_no = prov[0].get("page_no")
-    if page_no is None or page_no > max_page:
+    if table.page_no is None or table.page_no > max_page:
         return False
 
-    try:
-        df = table.export_to_dataframe(doc)
-    except TypeError:
-        df = table.export_to_dataframe()
-    except Exception:
+    if table.num_data_rows() < min_rows or table.num_cols == 0:
         return False
 
-    if df.shape[0] < min_rows or df.shape[1] == 0:
-        return False
-
-    last_col_values = [str(v).strip() for v in df.iloc[:, -1] if str(v).strip()]
+    last_col_values = table.last_column_values()
     if not last_col_values:
         return False
 
@@ -157,4 +144,4 @@ def is_toc_or_lof_decoy(
     if numeric_ratio < numeric_ratio_threshold:
         return False
 
-    return _has_toc_like_header(doc, page_no)
+    return _has_toc_like_header(parsed, table.page_no)

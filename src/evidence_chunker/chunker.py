@@ -90,6 +90,13 @@ def build_evidence_units(
         group_sentences_by_row,
     )
     from .filters import find_duplicate_tables, is_toc_or_lof_decoy
+    from .parser.docling import DoclingParser
+
+    # filters.py는 Stage 4에서 ParsedDoc 기반으로 전환됨 — 아직 caption.py/
+    # context.py는 raw DoclingDocument를 그대로 쓰므로, 이 함수는 당분간
+    # 두 가지를 동시에 들고 간다. 재파싱은 아니라 from_doc()이 이미 파싱된
+    # doc을 순회만 하는 가벼운 변환임.
+    parsed = DoclingParser().from_doc(doc)
 
     page_sizes: dict[int, dict] = {}
     if hasattr(doc, "pages"):
@@ -99,7 +106,7 @@ def build_evidence_units(
 
     # ── 중복 표 감지: Docling이 표 1개를 TableItem 2개로 중복 인식하는 경우
     #    제거되는 쪽(loser)의 캡션이 direct로 잡혀 있으면 남는 쪽(winner)에 물려줌 ──
-    dup_drop_map = find_duplicate_tables(doc)
+    dup_drop_map = find_duplicate_tables(parsed)
     dup_donor_caption = {}
     for loser_idx, winner_idx in dup_drop_map.items():
         donor_mapping = map_table_caption(doc, doc.tables[loser_idx], loser_idx)
@@ -113,7 +120,7 @@ def build_evidence_units(
         if table_index in dup_drop_map:
             continue  # 중복 표: 더 세밀하게 구조화된 쪽만 남김
 
-        if is_toc_or_lof_decoy(doc, table):
+        if is_toc_or_lof_decoy(parsed, parsed.tables[table_index]):
             continue  # v03 p3 필터: 목차/그림·표 목록이 표로 오인식된 경우 EU 생성 대상에서 제외
 
         t_dict = table.model_dump()
