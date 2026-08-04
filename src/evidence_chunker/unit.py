@@ -302,3 +302,35 @@ class EvidenceUnit:
                 units.append(fallback)
 
         return units
+
+    # ------------------------------------------------------------------
+    # RetrievalChunk 프로토콜 (export.RetrievalChunk 참고)
+    #
+    # build_corpus()가 EU와 HybridChunker 유래 일반 청크(export.TextChunk)를
+    # 같은 리스트에 섞어 반환하므로, 두 타입이 같은 속성 집합(chunk_id/text/
+    # retrieval_text/retrieval_units/metadata)을 노출해야 to_langchain() 등
+    # export 함수가 isinstance 분기 없이 균일하게 동작한다.
+    # ------------------------------------------------------------------
+    @property
+    def chunk_id(self) -> str:
+        return self.eu_id
+
+    @property
+    def metadata(self) -> dict:
+        """LangChain/LlamaIndex 문서 메타데이터 (retrieval_text 포함, whole-chunk 모드용).
+
+        export.to_langchain_units() 등 exploded 모드는 이 dict에서
+        retrieval_text를 빼고 parent_text로 대체해서 쓴다.
+        """
+        return {
+            "eu_id": self.eu_id,
+            "page_no": self.page_no,
+            "section_header": self.section_header,
+            "caption_text": self.caption_text,
+            "bbox": list(self.bbox),
+            "is_split": self.is_split,
+            "split_index": self.split_index,
+            "total_splits": self.total_splits,
+            "caption_confidence": self.caption_confidence,
+            "retrieval_text": self.retrieval_text,
+        }
