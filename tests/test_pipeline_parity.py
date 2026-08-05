@@ -17,10 +17,12 @@ Docling 파싱이 두 번 일어나 메모리 누적으로 std::bad_alloc이 날
 """
 from evidence_chunker import EvidenceChunker
 from evidence_chunker.chunker import build_evidence_units, split_oversized_units
+from evidence_chunker.parser.docling import DoclingParser
 
 
 def test_chunk_applies_split(sample_doc):
-    raw = build_evidence_units(sample_doc)
+    parsed = DoclingParser().from_doc(sample_doc)
+    raw = build_evidence_units(parsed)
     eus = split_oversized_units(raw)
 
     # 빌더 결과를 빠짐없이 포함 (두 경로가 갈라지지 않음)
@@ -38,10 +40,10 @@ def test_chunk_wires_split(monkeypatch):
         "evidence_chunker.chunker.split_oversized_units",
         lambda eus, *a, **k: called.append(eus) or eus,
     )
-    monkeypatch.setattr(EvidenceChunker, "_parse", lambda self, p: object())
+    monkeypatch.setattr(EvidenceChunker, "_get_parsed", lambda self, p: object())
     monkeypatch.setattr(
         "evidence_chunker.chunker.build_evidence_units",
-        lambda doc, *a, **k: [],
+        lambda parsed, *a, **k: [],
     )
 
     EvidenceChunker().chunk("dummy.pdf")
