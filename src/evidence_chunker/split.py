@@ -300,14 +300,27 @@ def split_eu(
     )
 
 
-def split_oversized_units(eu_list: list[EvidenceUnit]) -> list[EvidenceUnit]:
+def split_oversized_units(
+    eu_list: list[EvidenceUnit],
+    stats: dict | None = None,
+) -> list[EvidenceUnit]:
     """
     512토큰(DEFAULT_TOKEN_LIMIT) 초과 EU를 split_eu()로 행 단위 분할.
     한도 이내 EU는 그대로 통과.
+
+    stats를 넘기면 전략별 건수와 분할 규모(split_eus / split_chunks)를
+    채워준다. 문맥 배분을 바꾸면 조각 수가 크게 흔들리므로(위 주석 참고)
+    그 폭을 관측하기 위한 계측. 동작에는 영향 없다.
     """
     result = []
     for eu in eu_list:
-        result.extend(split_eu(eu).chunks)
+        r = split_eu(eu)
+        if stats is not None:
+            stats[f"strategy:{r.strategy}"] = stats.get(f"strategy:{r.strategy}", 0) + 1
+            if r.strategy == "row_split":
+                stats["split_eus"] = stats.get("split_eus", 0) + 1
+                stats["split_chunks"] = stats.get("split_chunks", 0) + len(r.chunks)
+        result.extend(r.chunks)
     return result
 
 
