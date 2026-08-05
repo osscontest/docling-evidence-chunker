@@ -89,7 +89,7 @@ LlamaIndex는 `evidence_chunker.export.llamaindex`의 `to_llamaindex` / `to_llam
 
 파싱은 Docling을 쓰지만, 알고리즘은 Docling에 의존하지 않는다. `caption` / `context` / `filters` / `flatten` 모듈은 내부 문서 모델(`ParsedDoc`)만 다루며, Docling import를 차단한 상태에서 테스트가 통과한다 (`tests/test_no_docling_dependency.py`, CI에서 매 커밋 검증).
 
-다른 파서를 붙이려면 `PdfParser` 프로토콜의 `parse()` 하나만 구현하면 된다.
+`chunker.chunk()`(표만 추출)는 실제로 교체 가능하다 — `EvidenceChunker(parser=...)`에 `PdfParser` 프로토콜(`parse(path) -> ParsedDoc`)을 구현한 인스턴스를 넘기면 Docling을 아예 거치지 않고 그 parser로만 동작한다 (`tests/test_parser_injection.py`가 Docling import를 막아둔 채로 이걸 증명함). 다만 `build_corpus()`(표+일반 본문)의 일반 본문 청킹은 Docling `HybridChunker`에 직접 결합돼 있어서 커스텀 parser를 넘기면 `NotImplementedError`가 난다 — 표만 필요하면 `chunk()`를 쓸 것.
 
 ## 알고리즘
 

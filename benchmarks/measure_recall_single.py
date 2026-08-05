@@ -111,6 +111,7 @@ def main():
     import numpy as np
 
     from evidence_chunker.chunker import build_evidence_units
+    from evidence_chunker.parser.docling import DoclingParser
     from evidence_chunker.split import split_oversized_units
 
     # ------------------------------------------------------------------
@@ -128,7 +129,8 @@ def main():
     # 2. EvidenceUnit 빌드 (+ 옵션에 따라 table_splitter 적용)
     # ------------------------------------------------------------------
     section("EvidenceUnit 빌드")
-    eu_list = build_evidence_units(doc)
+    parsed = DoclingParser().from_doc(doc)
+    eu_list = build_evidence_units(parsed)
     print(f"  원본 표 EU: {len(eu_list)}개")
 
     if APPLY_SPLIT:

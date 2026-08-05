@@ -127,6 +127,7 @@ def build_corpus(doc, eu_list):
 def evaluate_pdf(pdf_name, qa_list, model):
     from docling.document_converter import DocumentConverter
     from evidence_chunker.chunker import build_evidence_units
+    from evidence_chunker.parser.docling import DoclingParser
     from evidence_chunker.split import split_oversized_units
     import numpy as np
 
@@ -135,7 +136,8 @@ def evaluate_pdf(pdf_name, qa_list, model):
     result = converter.convert(pdf_path)
     doc = result.document
 
-    eu_list = build_evidence_units(doc)
+    parsed = DoclingParser().from_doc(doc)
+    eu_list = build_evidence_units(parsed)
     if APPLY_SPLIT:
         eu_list = split_oversized_units(eu_list)
 
