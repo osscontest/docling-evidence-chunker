@@ -1,34 +1,47 @@
 """
-Shared DocumentConverter factory — uses local model directory to avoid
-Windows symlink permission issues with HuggingFace Hub cache.
+Docling DocumentConverter 팩토리.
 """
-import os
+
 from pathlib import Path
 
 
 MODELS_DIR = Path(__file__).parent.parent.parent.parent / "models"
 
 
-def make_converter():
-    """Return a DocumentConverter configured to use local model artifacts."""
+def make_converter(do_ocr: bool | None = None, use_local_models: bool = False):
+    """DocumentConverter 생성.
+
+    Parameters
+    ----------
+    do_ocr :
+        None(기본)이면 **Docling 기본값을 그대로 따른다** — 우리가 값을 넘기지
+        않는다. OCR 은 속도·품질 트레이드오프라 라이브러리가 대신 정할 문제가
+        아니고, 여기서 True 로 박아두면 Docling 이 나중에 기본값을 바꿔도
+        우리가 그걸 무시하게 된다. 켜거나 끄고 싶으면 호출부에서 명시할 것.
+    use_local_models :
+        `models/combined` 의 로컬 아티팩트 사용 여부. 기본 False —
+        이 경로가 일부 PDF 7페이지에서 std::bad_alloc 으로 표를 통째로 날린다
+        (benchmarks/measure_recall_single.py 주석). 필요할 때만 opt-in.
+    """
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.pipeline_options import PdfPipelineOptions
 
-    # combined/ has model.safetensors (layout) + model_artifacts/ (table) merged
-    artifacts_path = MODELS_DIR / "combined"
-    if not artifacts_path.exists():
-        # Fallback: let docling use its default HF cache
-        artifacts_path = None
+    artifacts_path = None
+    if use_local_models:
+        # combined/ = layout(model.safetensors) + table(model_artifacts/) 병합본
+        candidate = MODELS_DIR / "combined"
+        artifacts_path = candidate if candidate.exists() else None
 
-    pipeline_options = PdfPipelineOptions(
-        do_ocr=False,                   # PDF has native text — skip OCR
-        do_table_structure=True,        # keep table cell detection
-        artifacts_path=artifacts_path,  # use local models dir
-    )
+    # do_table_structure 만 고정한다. 표 구조 추출이 꺼지면 Evidence Unit 을
+    # 만들 수 없어서 라이브러리 자체가 성립하지 않으므로 이건 '선호'가 아니라
+    # '요구사항'이다. 반대로 do_ocr 은 선호라서 넘기지 않는다.
+    opts = {"do_table_structure": True, "artifacts_path": artifacts_path}
+    if do_ocr is not None:
+        opts["do_ocr"] = do_ocr
 
     return DocumentConverter(
         format_options={
-            "pdf": PdfFormatOption(pipeline_options=pipeline_options)
+            "pdf": PdfFormatOption(pipeline_options=PdfPipelineOptions(**opts))
         }
     )
 
@@ -76,19 +89,20 @@ class DoclingParser:
     """
     ParsedDoc을 만드는 기본 파서.
 
-    make_converter()(로컬 모델 아티팩트 우선)를 쓰지 않는다 — 이 저장소의
-    실제 파이프라인(EvidenceChunker._make_converter(), 모든 benchmarks/*.py)이
-    전부 plain DocumentConverter()를 쓰고 있고, make_converter()는 로컬
-    모델 경로를 쓸 때 이 PDF의 7페이지에서 std::bad_alloc으로 표를 통째로
-    날려버리는 문제가 있어(measure_recall_single.py 주석 참고) 애초에
-    쓰지 않기로 한 경로다. DoclingParser가 여길 쓰면 알고리즘이 그동안
-    측정된 것과 다른 파싱 결과를 받게 된다.
+    make_converter(use_local_models=True) 는 쓰지 않는다 — 로컬 모델 경로가
+    일부 PDF 7페이지에서 std::bad_alloc 으로 표를 통째로 날린다
+    (measure_recall_single.py 주석 참고). 로컬 모델만 빼면 make_converter()
+    와 동일한 설정이며, do_ocr 도 같은 값을 쓴다.
+
+    do_ocr 는 기본이 None = Docling 기본값 위임. 라이브러리가 대신 정하지
+    않는다(make_converter 참고).
     """
 
-    def parse(self, path: str) -> "ParsedDoc":
-        from docling.document_converter import DocumentConverter
+    def __init__(self, do_ocr: bool | None = None):
+        self.do_ocr = do_ocr
 
-        doc = DocumentConverter().convert(path).document
+    def parse(self, path: str) -> "ParsedDoc":
+        doc = make_converter(do_ocr=self.do_ocr).convert(path).document
         return self.from_doc(doc)
 
     def from_doc(self, doc) -> "ParsedDoc":
