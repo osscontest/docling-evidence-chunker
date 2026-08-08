@@ -47,6 +47,13 @@ class EvidenceUnit:
                          # PDF 여러 개를 한 인덱스에 넣을 때 eu_id 충돌(예: 서로 다른
                          # 문서의 "eu-p3-0")을 막기 위해 eu_id 접두사로 들어간다.
 
+    # [fix] page_no 는 표 자신의 페이지 하나뿐이라, context_before/after 가
+    # 인접 페이지(table_page-1/+1)에서 끌어온 경우 그 사실이 어디에도 안 남았다
+    # — 평가 스크립트가 "정답 페이지를 포함하는가"를 판정할 때 이 EU가 실제로
+    # 걸친 모든 페이지를 몰라서 인접 페이지 오차를 전부 오답 처리하던 문제의
+    # 원인. attach_context_paragraphs()가 채운다(기본값은 {page_no}).
+    page_span: set[int] = field(default_factory=set)
+
     # ------------------------------------------------------------------
     # 내용
     # ------------------------------------------------------------------
@@ -344,6 +351,9 @@ class EvidenceUnit:
             "eu_id": self.eu_id,
             "doc_id": self.doc_id,
             "page_no": self.page_no,
+            # page_span 이 비어있으면(attach_context_paragraphs 안 거친 경로 등)
+            # page_no 하나짜리로 안전하게 fallback — 호출자가 매번 None 체크 안 해도 됨.
+            "page_span": sorted(self.page_span) if self.page_span else [self.page_no],
             "section_header": self.section_header,
             "caption_text": self.caption_text,
             "bbox": list(self.bbox),
