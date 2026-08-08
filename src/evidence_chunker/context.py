@@ -148,7 +148,7 @@ def _collect_by_bbox(
     table_page: int,
     table_bbox: "BBox",
     bbox_threshold: float,
-) -> tuple[list[tuple[float, str]], list[tuple[float, str]]]:
+) -> tuple[list[tuple[float, str, int]], list[tuple[float, str, int]]]:
     """
     bbox 거리 기준 단락 수집. 같은 페이지 + 인접 페이지 경계 케이스 포함.
     섹션 경계를 넘는 단락은 항상 제외.
@@ -162,18 +162,21 @@ def _collect_by_bbox(
     무관한 컬럼의 내용을 잘못 끌어올 위험은 낮다.
 
     Returns:
-        before: [(거리, 텍스트), ...] — 표 위쪽, 거리 오름차순
-        after:  [(거리, 텍스트), ...] — 표 아래쪽, 거리 오름차순
+        before: [(거리, 텍스트, page_no), ...] — 표 위쪽, 거리 오름차순
+        after:  [(거리, 텍스트, page_no), ...] — 표 아래쪽, 거리 오름차순
+
+    [fix] page_no 를 3번째 원소로 추가 — 인접 페이지(table_page±1)에서 끌어온
+    단락이 있으면 attach_context_paragraphs()가 eu.page_span 에 반영한다.
     """
     from .parser.base import BlockLabel
 
     table_top_y = table_bbox.t
     table_bot_y = table_bbox.b
 
-    before_same_col: list[tuple[float, str]] = []
-    before_any_col: list[tuple[float, str]] = []
-    after_same_col: list[tuple[float, str]] = []
-    after_any_col: list[tuple[float, str]] = []
+    before_same_col: list[tuple[float, str, int]] = []
+    before_any_col: list[tuple[float, str, int]] = []
+    after_same_col: list[tuple[float, str, int]] = []
+    after_any_col: list[tuple[float, str, int]] = []
 
     # 인접 페이지 탐색 여부 판단. TOPLEFT: 페이지 위쪽 = y가 0에 가까움,
     # 페이지 아래쪽 = y가 page_height에 가까움.
@@ -181,8 +184,8 @@ def _collect_by_bbox(
     check_prev = page_height > 0 and table_top_y <= page_height * ADJACENT_PAGE_EDGE_RATIO
     check_next = page_height > 0 and table_bot_y >= page_height * (1 - ADJACENT_PAGE_EDGE_RATIO)
 
-    before: list[tuple[float, str]] = []
-    after: list[tuple[float, str]] = []
+    before: list[tuple[float, str, int]] = []
+    after: list[tuple[float, str, int]] = []
 
     for item in parsed.texts:
         if item.label.value not in CONTEXT_LABEL_NAMES:
@@ -201,7 +204,7 @@ def _collect_by_bbox(
                     continue
                 if _has_section_boundary(parsed, table_page, table_top_y, cy, "above"):
                     continue
-                (before_same_col if same_col else before_any_col).append((dist, text))
+                (before_same_col if same_col else before_any_col).append((dist, text, table_page))
 
             elif cy > table_bot_y:  # TOPLEFT: 표 아래
                 dist = cy - table_bot_y
@@ -209,7 +212,7 @@ def _collect_by_bbox(
                     continue
                 if _has_section_boundary(parsed, table_page, table_bot_y, cy, "below"):
                     continue
-                (after_same_col if same_col else after_any_col).append((dist, text))
+                (after_same_col if same_col else after_any_col).append((dist, text, table_page))
 
         # 이전 페이지 하단 단락 (표가 현재 페이지 맨 위 근처일 때)
         # TOPLEFT: 페이지 하단 = cy가 그 페이지 높이에 가까운 값 — BOTTOMLEFT와
@@ -217,14 +220,14 @@ def _collect_by_bbox(
         elif check_prev and item.page_no == table_page - 1:
             prev_page_height = parsed.page_sizes.get(table_page - 1, (0.0, 0.0))[1]
             if prev_page_height > 0 and cy >= prev_page_height - bbox_threshold:
-                before.append((prev_page_height - cy + 1.0, text))
+                before.append((prev_page_height - cy + 1.0, text, table_page - 1))
 
         # 다음 페이지 상단 단락 (표가 현재 페이지 맨 아래 근처일 때)
         # TOPLEFT: 페이지 상단은 항상 y=0이라 그 페이지 높이 조회가 필요 없다
         # (원본 BOTTOMLEFT는 페이지 상단이 page_height라 조회가 필요했음).
         elif check_next and item.page_no == table_page + 1:
             if cy <= bbox_threshold:
-                after.append((cy + 1.0, text))
+                after.append((cy + 1.0, text, table_page + 1))
 
     before.extend(before_same_col or before_any_col)
     after.extend(after_same_col or after_any_col)
@@ -250,34 +253,39 @@ def _get_embedding_model():
 
 
 def _embedding_filter(
-    candidates: list[tuple[float, str]],
+    candidates: list[tuple[float, str, int]],
     reference_text: str,
     sim_threshold: float,
-) -> list[str]:
+) -> list[tuple[str, int]]:
     """
     코사인 유사도 >= sim_threshold 인 단락만 통과.
 
     reference_text 없으면 전부 통과 (캡션 없는 표 방어).
     sentence-transformers 미설치 시 전부 통과 (graceful degradation).
+
+    [fix] 반환을 (텍스트, page_no) 튜플로 바꿈 — 페이지 정보를 여기서
+    버리면 attach_context_paragraphs()가 page_span 을 못 채운다.
     """
     if not reference_text:
-        return [text for _, text in candidates]
+        return [(text, page) for _, text, page in candidates]
 
     try:
         from sentence_transformers import util
         model = _get_embedding_model()
     except ImportError:
-        return [text for _, text in candidates]
+        return [(text, page) for _, text, page in candidates]
 
     if not candidates:
         return []
 
     ref_emb = model.encode(reference_text, convert_to_tensor=True)
-    texts = [text for _, text in candidates]
+    texts = [text for _, text, _ in candidates]
+    pages = [page for _, _, page in candidates]
     cand_embs = model.encode(texts, convert_to_tensor=True)
     scores = util.cos_sim(ref_emb, cand_embs)[0]
 
-    return [text for text, score in zip(texts, scores) if score.item() >= sim_threshold]
+    return [(text, page) for text, page, score in zip(texts, pages, scores)
+            if score.item() >= sim_threshold]
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +355,15 @@ def attach_context_paragraphs(
     )
 
     reference = eu.caption_text or eu.table_abstract or ""
-    eu.context_before = _embedding_filter(before_candidates, reference, sim_threshold)
-    eu.context_after  = _embedding_filter(after_candidates,  reference, sim_threshold)
+    before_kept = _embedding_filter(before_candidates, reference, sim_threshold)
+    after_kept  = _embedding_filter(after_candidates,  reference, sim_threshold)
+
+    eu.context_before = [text for text, _ in before_kept]
+    eu.context_after  = [text for text, _ in after_kept]
+
+    # [fix] 표 자신의 페이지 + 실제로 채택된 문맥 단락이 걸친 페이지 전부.
+    # bbox_threshold 조건상 인접 페이지는 table_page±1 만 가능하므로 보통
+    # {page_no} 또는 {page_no, page_no±1} 정도의 작은 집합이 된다.
+    eu.page_span = {eu.page_no} | {p for _, p in before_kept} | {p for _, p in after_kept}
 
     return eu

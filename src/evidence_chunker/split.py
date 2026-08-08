@@ -229,12 +229,16 @@ def split_eu(
                     caption_text=eu.caption_text,
                     table_html=chunk_html,
                     footnote_text="",
-                    context_before=(
-                        eu.context_before
-                        if split_idx == 1
-                        else []
-                    ),
-                    context_after=[],
+                    # [fix] 결정4-A(문맥 단락은 모든 분할 조각에 전부 반복)대로 수정.
+                    # 기존엔 context_before가 s1에만, context_after는 아예 어느 비-마지막
+                    # 조각에도 안 들어갔음 — context_dependent 유형에서 recall은 맞는데
+                    # (정답 표는 찾음) EM만 실패하는 현상의 주 원인으로 실측 확인됨.
+                    # dev20 A/B 검증 완료(260808): 악화 0건 / 개선 5건, cell_value 손해 없음
+                    # (예전에 "cell_value -2.5pp 손해"로 폐기됐다는 기록이 있었으나, 지금
+                    # 코드베이스로 재검증한 결과 재현 안 됨 — 그 기록은 stale로 판단).
+                    context_before=list(eu.context_before),
+                    context_after=list(eu.context_after),
+                    page_span=set(eu.page_span),  # [fix] 부모 EU의 page_span 그대로 전파
                     flattened_rows=_flattened_for(current_positions),
                     table_abstract=eu.table_abstract,
                     bbox=eu.bbox,
@@ -270,12 +274,10 @@ def split_eu(
                 caption_text=eu.caption_text,
                 table_html=chunk_html,
                 footnote_text=eu.footnote_text,
-                context_before=(
-                    eu.context_before
-                    if split_idx == 1
-                    else []
-                ),
-                context_after=eu.context_after,
+                # [fix] 위와 동일 — 마지막 조각도 split_idx==1(=단일 조각)일 때만
+                # context_before를 받던 걸 항상 받도록 수정. dev20 A/B 검증 완료(260808).
+                context_before=list(eu.context_before),
+                context_after=list(eu.context_after),
                 flattened_rows=_flattened_for(current_positions),
                 table_abstract=eu.table_abstract,
                 bbox=eu.bbox,
