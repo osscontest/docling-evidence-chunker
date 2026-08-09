@@ -50,7 +50,17 @@ class TextChunk:
             page_no = chunk.meta.doc_items[0].prov[0].page_no
         except (AttributeError, IndexError):
             pass
-        self.metadata = {"eu_id": None, "doc_id": doc_id, "page_no": page_no, "source": "hybrid"}
+        # [fix] chunk_id를 명시적으로 metadata에도 넣는다 — EvidenceUnit.metadata와
+        # 동일 필드명("chunk_id")으로 맞춰야 export.langchain/llamaindex의
+        # dedupe_by_chunk_id()가 두 타입을 균일하게 그룹핑할 수 있다.
+        # eu_id는 항상 None이라(TextChunk는 표가 아니므로) 이걸로는 그룹핑이 안 됨.
+        self.metadata = {
+            "chunk_id": self.chunk_id,
+            "eu_id": None,
+            "doc_id": doc_id,
+            "page_no": page_no,
+            "source": "hybrid",
+        }
 
 
 # ---------------------------------------------------------------------------

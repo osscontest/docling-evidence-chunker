@@ -74,3 +74,122 @@ def to_langchain_units(chunks: list["RetrievalChunk"]) -> list["LangChainDocumen
             for unit_text in c.retrieval_units
         )
     return docs
+
+
+# ---------------------------------------------------------------------------
+# max-pool 재랭킹 (검색 결과 후처리)
+# ---------------------------------------------------------------------------
+#
+# to_langchain_units()로 만든 벡터스토어는 EU 하나가 retrieval_units개의
+# Document로 쪼개져 들어간다. similarity_search(query, k=10)을 그냥 쓰면
+# 같은 EU의 유닛 여러 개가 top-10 슬롯을 몰아 차지해서, 실제로 검색
+# 가능한 "서로 다른 근거"의 개수가 줄어든다 — Recall@5/10에서 손해로
+# 실측됨(docs/Benchmark.md §06, dev20+full90 재현). 원인은 EU 구조 자체가
+# 아니라 랭킹 집계 방식이었고, 같은 chunk_id(부모 EU/청크)끼리 최고
+# 점수만 남기고 재랭킹하면(max-pool) 오히려 baseline보다 앞선다
+# (full90: R@5 +8.1pp, R@10 +9.9pp vs 유닛 단위 랭킹, baseline 대비도
+# R@5 +2.7pp / R@10 +1.9pp).
+#
+# top-1(EM/Recall@1)은 이론상 dedupe 전후로 항상 동일하다 — 전역 1등
+# 유닛은 자기 그룹 안에서도 항상 최고 점수이므로. 실측상 코사인 유사도
+# 동률(같은 표의 분할 조각들이 caption/context를 그대로 공유하는 경우,
+# split.py의 문맥 반복 수정 참고)로 인해 극히 드물게(2725건 중 net +3)
+# 갈리지만 무해한 노이즈로 확인됨.
+
+def dedupe_by_chunk_id(
+    results: list,
+    k: "int | None" = None,
+    key: str = "chunk_id",
+) -> list:
+    """
+    이미 관련도 순으로 정렬된 검색 결과에서, 같은 부모 청크(chunk_id)를
+    가진 항목 중 **가장 앞에 나온 것(=가장 관련도 높은 것)만** 남긴다.
+
+    벡터스토어의 similarity_search() 계열 함수는 이미 관련도 내림차순으로
+    정렬해서 반환하므로, "정렬된 순서에서 그룹당 첫 등장만 채택"이
+    "그룹별 최고 점수로 재랭킹"과 결과가 같다 — 점수를 따로 비교할 필요가
+    없다. 그래서 이 함수는 (Document, score) 튜플 리스트든 Document
+    리스트든 둘 다 받는다.
+
+    사용 예시(직접 vectorstore를 쓸 때)::
+
+        results = vectorstore.similarity_search_with_score(query, k=20)
+        top5 = dedupe_by_chunk_id(results, k=5)
+
+    보통은 이 함수를 직접 부르는 대신 EvidenceRetriever를 쓰는 게 더 편하다.
+
+    Args:
+        results: similarity_search()/similarity_search_with_score() 등이
+            반환한, 이미 정렬된 검색 결과. Document 리스트 또는
+            (Document, score) 튜플 리스트.
+        k: dedupe 후 상위 k개만 반환. None이면 dedupe만 하고 전부 반환.
+        key: 그룹핑에 쓸 metadata 키. 기본 "chunk_id"
+            (EvidenceUnit.metadata/export.TextChunk.metadata 둘 다 채워줌).
+
+    Returns:
+        입력과 같은 형태(튜플이면 튜플, Document면 Document)의 리스트,
+        중복 chunk_id 제거 + (k가 있으면) 상위 k개로 자름.
+    """
+    seen: set = set()
+    deduped: list = []
+    for item in results:
+        doc = item[0] if isinstance(item, tuple) else item
+        cid = doc.metadata.get(key)
+        if cid is not None:
+            if cid in seen:
+                continue
+            seen.add(cid)
+        deduped.append(item)
+        if k is not None and len(deduped) >= k:
+            break
+    return deduped
+
+
+class EvidenceRetriever:
+    """max-pool dedupe가 기본으로 켜진 검색 래퍼.
+
+    `vectorstore.as_retriever()` 대신 이걸 쓰면 Recall@5/10이 개선된다
+    (docs/Benchmark.md §06 실측 근거). LangChain의 `BaseRetriever`를
+    상속하지 않은 얇은 래퍼라 버전 호환성 문제가 없다 — `get_relevant_documents()`
+    (구버전 API)와 `invoke()`(신버전 API) 둘 다 제공한다.
+
+    dedupe=False로 끄면 기존(유닛 단위 flat 랭킹) 동작으로 되돌아간다 —
+    커스텀 재랭킹을 직접 짜고 싶은 경우를 위한 탈출구.
+    """
+
+    def __init__(
+        self,
+        vectorstore,
+        k: int = 5,
+        fetch_k: "int | None" = None,
+        dedupe: bool = True,
+    ) -> None:
+        """
+        Args:
+            vectorstore: `similarity_search_with_score(query, k)`를 제공하는
+                LangChain VectorStore(FAISS, Chroma 등).
+            k: 최종 반환할 문서 수.
+            fetch_k: dedupe 전에 벡터스토어에서 미리 가져올 후보 수. EU 하나가
+                retrieval_units개로 쪼개져 있으므로 k보다 넉넉해야
+                dedupe 후에도 k개가 채워진다. 기본값은 `max(k * 4, 20)` —
+                실측(§06)에서 EU 하나당 유닛 수 평균이 문서마다 다르므로
+                여유 있게 잡은 경험적 값. 표가 아주 큰(분할 많이 된) 문서면
+                더 키우는 게 안전하다.
+            dedupe: False면 max-pool 없이 기존 flat 랭킹 그대로 반환.
+        """
+        self.vectorstore = vectorstore
+        self.k = k
+        self.fetch_k = fetch_k or max(k * 4, 20)
+        self.dedupe = dedupe
+
+    def get_relevant_documents(self, query: str) -> list["LangChainDocument"]:
+        results = self.vectorstore.similarity_search_with_score(query, k=self.fetch_k)
+        if self.dedupe:
+            results = dedupe_by_chunk_id(results, k=self.k)
+        else:
+            results = results[: self.k]
+        return [doc for doc, _score in results]
+
+    def invoke(self, query: str) -> list["LangChainDocument"]:
+        """LangChain 신버전 Runnable 인터페이스와 이름을 맞춘 별칭."""
+        return self.get_relevant_documents(query)
