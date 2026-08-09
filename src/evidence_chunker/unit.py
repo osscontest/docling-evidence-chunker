@@ -348,6 +348,14 @@ class EvidenceUnit:
         retrieval_text를 빼고 parent_text로 대체해서 쓴다.
         """
         return {
+            # [fix] max-pool 재랭킹(export.langchain/llamaindex.dedupe_by_chunk_id)이
+            # 같은 부모 청크에서 나온 검색 결과를 그룹핑할 키. eu_id와 값은
+            # 같지만(self.chunk_id == self.eu_id) export.TextChunk 쪽과 동일한
+            # 필드명으로 통일해야 두 타입을 isinstance 분기 없이 균일하게
+            # dedupe할 수 있다 — eu_id만 쓰면 TextChunk.metadata["eu_id"]가
+            # 항상 None이라 서로 다른 TextChunk들이 전부 한 그룹으로 잘못
+            # 묶인다(실측: Benchmark.md §06).
+            "chunk_id": self.chunk_id,
             "eu_id": self.eu_id,
             "doc_id": self.doc_id,
             "page_no": self.page_no,
