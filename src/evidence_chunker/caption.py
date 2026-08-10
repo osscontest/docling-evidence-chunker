@@ -237,6 +237,61 @@ def _find_caption_adjacent_page(
     return None, False
 
 
+# ---------------------------------------------------------------------------
+# fallback 4: 표 구조 자체에 병합된 캡션 (W5 EU 완성도 진단, 팀원2)
+# ---------------------------------------------------------------------------
+#
+# 위 세 fallback(direct/bbox/인접 페이지)은 전부 parsed.texts만 순회하는데,
+# Docling이 "Table N: ..."을 별도 텍스트 아이템이 아니라 표 자체의 첫 행
+# (다수 컬럼을 병합한 th/td 하나)으로 렌더링하는 경우가 있다 — 이러면 세
+# fallback 모두 원천적으로 못 본다. 실사례: 47. gao-26-107681-p19(EU 완성도
+# 진단, docs/EU완성도_진단.md 참고)의 table.html이
+# `<th colspan="2">Table 1: Expert-Identified Risks...</th>`로 시작.
+#
+# 표본(77개) 검증: 13개(16.9%) 회수, "Total"/"Tables"/"Single-Family..." 같은
+# 컬럼그룹·섹션 라벨은 캡션 패턴(table/표 + 숫자)에 안 맞아 정상 제외됨.
+#
+# [수정] 최초 구현은 발견한 캡션 행을 table.html에서 제거했으나, 리뷰에서
+# 치명적 desync를 지적받아 되돌림: TableBlock은 표를 html(문자열, split.py가
+# 씀)과 cells(dict 리스트, flatten.py가 씀) 두 개의 독립된 표현으로 병렬
+# 보유한다(parser/base.py) — 서로 같은 Docling 표에서 각자 따로 계산된
+# 것이라, 한쪽(html)만 고치면 cells는 캡션 행이 row 0에 그대로 남는다.
+# 그러면 (a) build_col_header_map/infer_headers_fallback이 그 행을 열
+# 헤더로 흡수해 flattened_rows 문장이 전부 캡션 텍스트로 오염되고,
+# (b) split.py의 header_row_offset(html 기준)과 row_sentence_map(cells
+# 기준)의 행 인덱스가 어긋나 분할 조각에 엉뚱한 행 문장이 붙는다. 이 함수는
+# caption_text만 추출하고 table.html/cells는 건드리지 않는다 — 대가는
+# EU.text에 캡션이 표 안에도 한 번 더 남는 경미한 토큰 중복뿐, 정확성
+# 문제는 없다. html/cells를 동시에 일관되게 벗기려면 파서 경계(둘 다 같은
+# 소스에서 만들어지는 parser/docling.py)에서 해야 하며, 여기(caption.py)는
+# table_html 소유권이 없어 안전하게 못 한다.
+
+_MERGED_HEADER_PATTERN = re.compile(
+    r'<t[hd][^>]*colspan="(\d+)"[^>]*>\s*(.*?)\s*</t[hd]>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _find_caption_in_merged_header(table_html: Optional[str]) -> Optional[str]:
+    """
+    표 첫 행이 다수 컬럼을 병합한 th/td 하나로만 이루어져 있고, 그 안 텍스트가
+    캡션 패턴(_looks_like_table_caption)에 맞으면 채택. table_html/cells는
+    건드리지 않는다(위 주석 참고) — 캡션 텍스트만 뽑아서 반환.
+
+    Returns:
+        caption_text — 못 찾으면 None
+    """
+    if not table_html:
+        return None
+    m = _MERGED_HEADER_PATTERN.search(table_html)
+    if not m:
+        return None
+    cell_text = re.sub(r"<[^>]+>", " ", m.group(2)).strip()
+    if not _looks_like_table_caption(cell_text):
+        return None
+    return cell_text
+
+
 def map_table_caption(parsed: "ParsedDoc", table: "TableBlock", table_index: int) -> CaptionMapping:
     """
     단일 표에 대한 캡션 매핑 (1:1).
@@ -247,7 +302,8 @@ def map_table_caption(parsed: "ParsedDoc", table: "TableBlock", table_index: int
       2. 참조가 없거나 전부 파편을 가리키면 같은 페이지 bbox 거리로 재탐색 (inferred)
       3. 같은 페이지에서도 못 찾으면 표 바로 앞/뒤 페이지에서 재탐색
          (inferred, cross_page=True)
-      4. 전부 실패하면 캡션 없음 (none)
+      4. 표 구조 자체(table.html)에 캡션이 병합된 행으로 들어있는지 확인 (inferred)
+      5. 전부 실패하면 캡션 없음 (none)
     """
     table_page = table.page_no
     table_top_y = table.bbox.t
@@ -315,6 +371,20 @@ def map_table_caption(parsed: "ParsedDoc", table: "TableBlock", table_index: int
             confidence="inferred",
             multi_caption=multi_caption,
             cross_page=True,
+        )
+
+    # fallback 4: 표 구조 자체에 병합된 캡션. table.html/cells는 그대로 둔다
+    # (위 주석 참고 — cells까지 같이 벗기지 않으면 desync가 생기므로 추출만).
+    merged_caption = _find_caption_in_merged_header(table.html)
+    if merged_caption:
+        return CaptionMapping(
+            table_index=table_index,
+            page_no=table_page,
+            caption_text=merged_caption,
+            caption_ref=None,
+            confidence="inferred",
+            multi_caption=multi_caption,
+            cross_page=cross_page,
         )
 
     return CaptionMapping(
