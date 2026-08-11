@@ -5,12 +5,11 @@ EU 생성 대상에서 표를 제외해야 하는 케이스 감지.
 
 기능:
   - find_duplicate_tables : Docling이 표 1개를 TableItem 2개로 중복 감지하는
-                            케이스 탐지 (W4 Recall@1 회귀 원인 중 하나)
+                            케이스 탐지
   - is_toc_or_lof_decoy   : 목차(ToC)/그림·표 목록(LoF)이 표로 오인식된 경우 감지
-                            (v03 p3 필터. 실측 근거: context_dependent_maxpooling_실험.md 11절)
 
 parser.base.ParsedDoc/TableBlock 기반 — Docling DoclingDocument를 직접
-만지지 않는다 (Stage 4 파서 추상화).
+만지지 않는다.
 """
 from __future__ import annotations
 
@@ -20,10 +19,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .parser.base import ParsedDoc, TableBlock
-
-# ---------------------------------------------------------------------------
-# 1. 중복 표 감지 (W4 Recall@1 회귀 원인 #2)
-# ---------------------------------------------------------------------------
 
 _DUP_TOKEN_RE = re.compile(r"[.,()%]+$")
 
@@ -47,15 +42,11 @@ def find_duplicate_tables(parsed: "ParsedDoc", overlap_ratio: float = 0.6) -> di
     """
     같은 페이지 내 표 쌍의 셀 텍스트 중복도로 중복 TableItem 감지.
 
-    실사례(docling 기술보고서 8페이지): 같은 물리적 표를 Docling이
-    TableItem 2개로 나눠 인식함 — 하나는 행이 뭉개진 채(1~2행) 캡션
-    RefItem과 연결되어 있고, 다른 하나는 행이 올바르게 분리(예: 13행)됐지만
-    캡션이 없음. 두 표 모두 EU로 만들면 코퍼스가 중복 표 조각으로
-    오염되고, 정작 제대로 구조화된 표는 캡션을 잃는다.
-
-    셀 텍스트 토큰 집합의 포함비율(containment = |교집합| / min(|A|,|B|))이
-    overlap_ratio 이상이면 같은 표로 간주하고, 행 수가 더 많은(더 세밀하게
-    구조화된) 쪽만 남긴다.
+    Docling이 같은 물리적 표를 TableItem 2개로 나눠 인식하는 경우가
+    있다(하나는 행이 뭉개진 채 캡션과 연결, 다른 하나는 행은 제대로
+    분리됐지만 캡션이 없음). 셀 텍스트 토큰 집합의 포함비율(containment =
+    |교집합| / min(|A|,|B|))이 overlap_ratio 이상이면 같은 표로 간주하고,
+    행 수가 더 많은(더 세밀하게 구조화된) 쪽만 남긴다.
 
     Returns:
         {제거할 표의 parsed.tables 인덱스: 남길 표의 parsed.tables 인덱스}
@@ -92,10 +83,6 @@ def find_duplicate_tables(parsed: "ParsedDoc", overlap_ratio: float = 0.6) -> di
     return drop_map
 
 
-# ---------------------------------------------------------------------------
-# 2. p3 필터 — ToC/그림·표 목록 오탐 감지
-# ---------------------------------------------------------------------------
-
 P3_MAX_PAGE = 5
 P3_NUMERIC_RATIO_THRESHOLD = 0.7
 P3_MIN_ROWS = 3
@@ -126,9 +113,9 @@ def is_toc_or_lof_decoy(
 ) -> bool:
     """목차(ToC)나 그림/표 목록(LoF)이 표로 오인식된 경우 True.
 
-    이 표는 build_evidence_units()의 EU 생성 대상에서 제외해야 한다
-    (baseline=HybridChunker 청킹에는 영향 주지 않음 — 호출자가
-    doc.tables를 필터링 전후로 원복해서 사용할 것).
+    build_evidence_units()가 이 표를 EU 생성 대상에서 건너뛴다(스캔 중
+    continue) — 일반 본문 청킹(_build_text_chunks()의 HybridChunker)은
+    parsed.tables를 보지 않으므로 영향받지 않는다.
     """
     if table.page_no is None or table.page_no > max_page:
         return False
