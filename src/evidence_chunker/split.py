@@ -22,10 +22,6 @@ class SplitResult:
     total_tokens: int
 
 
-# ----------------------------
-# HTML Parsing
-# ----------------------------
-
 def parse_table(table_html: str):
     """
     Returns
@@ -103,20 +99,12 @@ def estimate_chunk_tokens(caption, html, footnote=""):
     return count_tokens(text)
 
 
-# ----------------------------
-# Main
-# ----------------------------
-
 def split_eu(
     eu: EvidenceUnit,
     limit=SPLIT_LIMIT,
 ):
 
     total = count_tokens(eu.text)
-
-    # -----------------
-    # Stage 1
-    # -----------------
 
     if total <= limit:
 
@@ -127,10 +115,6 @@ def split_eu(
             total_tokens=total,
         )
 
-    # -----------------
-    # Stage 3
-    # -----------------
-
     if total > LLM_SUMMARY_LIMIT:
 
         return SplitResult(
@@ -139,10 +123,6 @@ def split_eu(
             original_eu_id=eu.eu_id,
             total_tokens=total,
         )
-
-    # -----------------
-    # Stage 2
-    # -----------------
 
     header_html, rows = parse_table(eu.table_html or "")
 
@@ -229,16 +209,11 @@ def split_eu(
                     caption_text=eu.caption_text,
                     table_html=chunk_html,
                     footnote_text="",
-                    # [fix] 결정4-A(문맥 단락은 모든 분할 조각에 전부 반복)대로 수정.
-                    # 기존엔 context_before가 s1에만, context_after는 아예 어느 비-마지막
-                    # 조각에도 안 들어갔음 — context_dependent 유형에서 recall은 맞는데
-                    # (정답 표는 찾음) EM만 실패하는 현상의 주 원인으로 실측 확인됨.
-                    # dev20 A/B 검증 완료(260808): 악화 0건 / 개선 5건, cell_value 손해 없음
-                    # (예전에 "cell_value -2.5pp 손해"로 폐기됐다는 기록이 있었으나, 지금
-                    # 코드베이스로 재검증한 결과 재현 안 됨 — 그 기록은 stale로 판단).
+                    # 문맥 단락은 모든 분할 조각에 전부 반복(일부 조각만 받으면
+                    # context_dependent 유형에서 EM이 실패함).
                     context_before=list(eu.context_before),
                     context_after=list(eu.context_after),
-                    page_span=set(eu.page_span),  # [fix] 부모 EU의 page_span 그대로 전파
+                    page_span=set(eu.page_span),  # 부모 EU의 page_span 그대로 전파
                     flattened_rows=_flattened_for(current_positions),
                     table_abstract=eu.table_abstract,
                     bbox=eu.bbox,
@@ -274,8 +249,6 @@ def split_eu(
                 caption_text=eu.caption_text,
                 table_html=chunk_html,
                 footnote_text=eu.footnote_text,
-                # [fix] 위와 동일 — 마지막 조각도 split_idx==1(=단일 조각)일 때만
-                # context_before를 받던 걸 항상 받도록 수정. dev20 A/B 검증 완료(260808).
                 context_before=list(eu.context_before),
                 context_after=list(eu.context_after),
                 flattened_rows=_flattened_for(current_positions),
@@ -311,8 +284,7 @@ def split_oversized_units(
     한도 이내 EU는 그대로 통과.
 
     stats를 넘기면 전략별 건수와 분할 규모(split_eus / split_chunks)를
-    채워준다. 문맥 배분을 바꾸면 조각 수가 크게 흔들리므로(위 주석 참고)
-    그 폭을 관측하기 위한 계측. 동작에는 영향 없다.
+    채워준다. 동작에는 영향 없음(계측 전용).
     """
     result = []
     for eu in eu_list:
