@@ -6,7 +6,13 @@ context.py
 attach_context_paragraphs(eu, parsed) 가 메인 진입점.
 
 * bbox 거리 기반 단락 수집
-* 코사인 유사도 필터, 섹션 헤딩 경계 감지, 멀티컬럼 예외처리
+* 코사인 유사도 필터(기본 비활성 — sim_threshold=0.0), 섹션 헤딩 경계 감지, 멀티컬럼 예외처리
+
+sim_threshold 기본값이 0.0(Roadmap 7, Benchmark.md §11)으로 바뀐 뒤로는
+_embedding_filter()가 model.encode() 호출 자체를 스킵한다(아래 참고) — 즉
+기본 설정으로 쓰면 sentence-transformers/torch가 설치돼 있지 않아도 청킹이
+그대로 동작한다. sim_threshold를 0 초과로 직접 올려서 넘기는 호출자만 그
+무거운 의존성이 필요하다(pyproject.toml의 optional extra로 분리됨).
 
 Stage 4 파서 추상화: parser.base.ParsedDoc/TextBlock/TableBlock 기반 —
 Docling DoclingDocument를 직접 만지지 않는다. 좌표는 TOPLEFT(파서 경계에서
@@ -262,11 +268,23 @@ def _embedding_filter(
 
     reference_text 없으면 전부 통과 (캡션 없는 표 방어).
     sentence-transformers 미설치 시 전부 통과 (graceful degradation).
+    sim_threshold <= 0 이면 전부 통과 — 아래 short-circuit 참고.
 
     [fix] 반환을 (텍스트, page_no) 튜플로 바꿈 — 페이지 정보를 여기서
     버리면 attach_context_paragraphs()가 page_span 을 못 채운다.
     """
     if not reference_text:
+        return [(text, page) for _, text, page in candidates]
+
+    # [최적화] sim_threshold <= 0 이면 결과적으로 모든 후보가 통과한다
+    # (실측 코사인 유사도는 사실상 항상 0 이상 — Benchmark.md §11).
+    # 라이브러리 기본값이 0.0으로 바뀐 뒤(Roadmap 7) 이 분기가 사실상 항상
+    # 타므로, 결과가 뻔한 model.encode() 호출(문서당 가장 무거운 연산 — 임베딩
+    # 모델 로드 + 추론)을 아예 스킵한다. sentence-transformers/torch import도
+    # 여기서 걸리지 않으므로, 사용자가 sim_threshold를 0 이하로 두면(기본값)
+    # 그 무거운 패키지가 설치돼 있지 않아도 청킹이 그대로 동작한다
+    # (pyproject.toml에서 sentence-transformers를 optional extra로 내린 것과 짝).
+    if sim_threshold <= 0:
         return [(text, page) for _, text, page in candidates]
 
     try:
@@ -296,7 +314,7 @@ def attach_context_paragraphs(
     eu: "EvidenceUnit",
     parsed: "ParsedDoc",
     bbox_threshold: float = CONTEXT_WINDOW_PT,
-    sim_threshold: float = 0.40,
+    sim_threshold: float = 0.0,
     table_bbox: "BBox | None" = None,
 ) -> "EvidenceUnit":
     """
@@ -306,7 +324,11 @@ def attach_context_paragraphs(
         eu:             EU 기본 뼈대
         parsed:         파서 추상화 문서 (parser.base.ParsedDoc)
         bbox_threshold: 표 위아래 수집 범위 (PDF 포인트). 기본 300pt
-        sim_threshold:  임베딩 유사도 임계값. 기본 0.40
+        sim_threshold:  임베딩 유사도 임계값. 기본 0.0(사실상 무필터).
+                        dev20 스윕(Benchmark.md §11)에서 0.40 대비
+                        context_dependent EM +12.5pp, 감시 지표 저해 없음
+                        확인 후 변경. 더 엄격한 필터가 필요하면 호출자가
+                        직접 값을 올려서 넘기면 됨(파라미터는 유지).
         table_bbox:     이 EU가 속한 표의 원본(TOPLEFT 정규화) bbox. 호출자가
                          parsed.tables를 순회하며 이미 알고 있는 값을 직접
                          넘겨주는 게 정확하다 — find_duplicate_tables()로
