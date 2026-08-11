@@ -3,6 +3,10 @@ Docling DocumentConverter 팩토리 + DoclingParser(DoclingDocument -> ParsedDoc
 """
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .base import BBox, ParsedDoc
 
 
 MODELS_DIR = Path(__file__).parent.parent.parent.parent / "models"
