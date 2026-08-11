@@ -22,11 +22,9 @@ def to_llamaindex(chunks: list["RetrievalChunk"]) -> list["LlamaIndexTextNode"]:
     RetrievalChunk 리스트 → LlamaIndex TextNode 리스트 (1 chunk = 1 TextNode).
     LlamaIndex RAG 파이프라인에 넘길 때 사용.
 
-    chunk.chunk_id를 TextNode.id_로 명시 지정한다. EvidenceUnit(eu_id)과
+    chunk.chunk_id를 TextNode.id_로 명시 지정한다 — EvidenceUnit(eu_id)과
     export.TextChunk("{doc_id}-hybrid-{index}") 둘 다 항상 안정적인 값을
-    주므로(예전엔 TextChunk의 chunk_id가 항상 None이라 LlamaIndex가 자동
-    생성하는 임시 id에 의존했음 — PDF 여러 개를 합치면 일반 본문 청크의
-    출처를 구분할 방법이 없었던 실사용 버그), 무조건 지정한다.
+    준다.
     """
     if LlamaIndexTextNode is None:
         raise ImportError("llama-index-core is not installed. pip install llama-index-core")
@@ -114,8 +112,6 @@ class EvidenceRetriever:
 
     LlamaIndex의 기존 retriever(`VectorIndexRetriever` 등)를 감싼다.
     `dedupe=False`로 끄면 기존(유닛 단위 flat 랭킹) 동작 그대로.
-    근거: docs/Benchmark.md §06 (full90 기준 R@5 +8.1pp, R@10 +9.9pp
-    vs flat 랭킹, baseline 대비도 R@5 +2.7pp / R@10 +1.9pp).
     """
 
     def __init__(self, base_retriever, k: int = 5, dedupe: bool = True) -> None:
@@ -124,9 +120,7 @@ class EvidenceRetriever:
             base_retriever: `.retrieve(query)`를 제공하는 LlamaIndex retriever.
                 생성 시 `similarity_top_k`를 최종 k보다 넉넉하게 잡아둘 것 —
                 EU 하나가 retrieval_units개로 쪼개져 있으므로, dedupe 후에도
-                k개가 채워지려면 후보를 그만큼 더 가져와야 한다(LangChain
-                버전의 fetch_k와 동일한 이유, 여긴 base_retriever 생성자에서
-                미리 설정).
+                k개가 채워지려면 후보를 그만큼 더 가져와야 한다.
             k: dedupe 후 최종 반환할 노드 수.
             dedupe: False면 max-pool 없이 base_retriever 결과 그대로(상위 k개만 자름).
         """
