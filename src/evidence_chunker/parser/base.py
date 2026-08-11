@@ -5,23 +5,17 @@ Docling과 무관한 내부 문서 모델 + 파서 Protocol.
 
 flatten.py/caption.py/context.py/filters.py가 Docling의 DoclingDocument를
 직접 만지지 않고 이 모델(ParsedDoc/TextBlock/TableBlock)만 알게 하려는 목적.
-tests/test_caption_exceptions.py의 FakeItem이 이미 최소 프로토콜(label,
-text, page_no, bbox 네 개)을 실증하고 있었음 — TextBlock이 그 형태 그대로다.
+TextBlock의 필드(label/text/page_no/bbox)는 캡션 예외처리 테스트
+(tests/test_caption_exceptions.py)가 이미 검증에 쓰던 최소 프로토콜
+형태를 그대로 정식 모델로 승격한 것이다.
 
 핵심 3가지:
-  - 좌표계를 파서 경계에서 TOPLEFT로 정규화. Docling 원본은 BOTTOMLEFT
-    (t > b, 시각적 위쪽 = 큰 y)인데, context.py/caption.py가 각자 "BOTTOMLEFT
-    좌표계: 시각적으로 표 위 = cy > table_top_y" 같은 주석으로 이 가정을
-    반복 재서술하고 있었다. 여기서 한 번만 뒤집어서 이후로는 "시각적으로
-    위쪽 = 작은 y"라는, 화면 좌표계에 익숙한 사람 누구나 맞는 직관을 쓴다.
-    (알고리즘 쪽 부등호 반전은 별도 커밋에서, bbox flip 테스트로 먼저 잠근
-    다음에 진행 — 여기서는 파서 구현만 한다.)
-  - cref 문자열("#/texts/3")을 정수 인덱스로. caption.py의 resolve_ref()
-    같은 파싱 코드가 사라지고, self_ref 문자열 대조(그림 캡션 구조적 판별)도
-    정수 비교가 된다.
-  - 라벨을 자체 Enum으로 축소. 실제로 쓰는 5종(text/list_item/paragraph/
-    section_header/caption)만 남긴다 — 이 5종 외에는 알고리즘 어디서도
-    라벨 문자열을 비교하지 않음을 grep으로 확인함.
+  - 좌표계를 파서 경계에서 TOPLEFT로 정규화(Docling 원본은 BOTTOMLEFT) —
+    이후 알고리즘은 "위쪽 = 작은 y"라는 화면 좌표계 직관을 그대로 쓴다.
+  - cref 문자열("#/texts/3")을 정수 인덱스로 — 파싱/문자열 대조 없이
+    바로 인덱스 비교.
+  - 라벨을 자체 Enum 5종(text/list_item/paragraph/section_header/
+    caption)으로 축소 — 알고리즘이 실제로 비교하는 라벨만 남김.
 """
 from __future__ import annotations
 
@@ -80,10 +74,7 @@ class TableBlock:
 
         행 단위로 헤더를 판정한다(그 행에 column_header 셀이 하나라도
         있으면 헤더 행) — 셀 단위로 판정하면 다단 헤더 표의 좌상단 모서리
-        셀(예: "CPU")이 column_header=False로 찍힌 경우를 데이터 행으로
-        잘못 셈(실측: docling_technical_report.pdf table[0]에서 헤더 2행 중
-        1행이 이렇게 새서 3으로 잘못 나왔고, pandas export_to_dataframe()는
-        2였음 — 셀 단위 판정 대신 행 단위로 바꿔서 일치시킴).
+        셀이 column_header=False로 찍힌 경우를 데이터 행으로 잘못 센다.
         """
         all_rows: dict[int, bool] = {}
         for c in self.cells:
