@@ -22,12 +22,10 @@ def to_langchain(chunks: list["RetrievalChunk"]) -> list["LangChainDocument"]:
     RetrievalChunk 리스트 → LangChain Document 리스트 (1 chunk = 1 Document).
     RAG 파이프라인에 넘길 때 사용.
 
-    chunk.metadata를 그대로 옮긴다 — EvidenceUnit.metadata는 "retrieval_text"
-    (임베딩 검색용 축약 텍스트, table_html 제외)를 포함하고, export.TextChunk
-    (표와 무관한 일반 청크)의 metadata는 {eu_id: None, page_no, source}뿐이다.
-    임베딩 모델은 보통 입력을 256토큰 안팎에서 truncate하므로, page_content
-    (전체 내용) 대신 metadata["retrieval_text"]로 벡터스토어를 구성하면
-    Recall이 개선된다 (LangChain MultiVectorRetriever 등에서 활용).
+    임베딩 모델은 보통 입력을 256토큰 안팎에서 truncate하므로,
+    page_content(전체 내용) 대신 metadata["retrieval_text"](EvidenceUnit
+    전용, table_html 제외한 축약 텍스트)로 벡터스토어를 구성하면 Recall이
+    개선된다(LangChain MultiVectorRetriever 등에서 활용).
     """
     if LangChainDocument is None:
         raise ImportError("langchain_core is not installed. pip install langchain-core")
@@ -47,12 +45,8 @@ def to_langchain_units(chunks: list["RetrievalChunk"]) -> list["LangChainDocumen
     유사도에서 밀리는 문제가 있다 (EvidenceUnit.retrieval_units 참고).
 
     is_atomic=False인(=EvidenceUnit) chunk만 retrieval_units 단위로 쪼갠다.
-    is_atomic=True인(=TextChunk, 표와 무관한 일반 청크) 항목은 그 자체가
-    이미 최소 단위라 쪼갤 게 없으므로 to_langchain()과 동일하게 1개 그대로
-    반환 — retrieval_units가 [text] 하나뿐이라 쪼개도 결과는 같지만,
-    metadata에 parent_text가 잘못 붙는 걸 막기 위해 분기한다(원본 일반
-    청크에는 parent_text 개념이 없음). chunk_id는 이제 TextChunk도 채워져
-    있어(문서 출처 구분용) None 여부로는 더 이상 구분할 수 없다.
+    is_atomic=True(=TextChunk)는 그 자체가 이미 최소 단위라 to_langchain()과
+    동일하게 1개 그대로 반환한다.
 
     벡터스토어에는 이 작은 Document들을 넣어서 검색 정밀도를 높이고,
     실제 LLM에 넘길 때는 page_content(작은 조각) 대신
@@ -76,25 +70,14 @@ def to_langchain_units(chunks: list["RetrievalChunk"]) -> list["LangChainDocumen
     return docs
 
 
-# ---------------------------------------------------------------------------
-# max-pool 재랭킹 (검색 결과 후처리)
-# ---------------------------------------------------------------------------
-#
 # to_langchain_units()로 만든 벡터스토어는 EU 하나가 retrieval_units개의
 # Document로 쪼개져 들어간다. similarity_search(query, k=10)을 그냥 쓰면
-# 같은 EU의 유닛 여러 개가 top-10 슬롯을 몰아 차지해서, 실제로 검색
-# 가능한 "서로 다른 근거"의 개수가 줄어든다 — Recall@5/10에서 손해로
-# 실측됨(docs/Benchmark.md §06, dev20+full90 재현). 원인은 EU 구조 자체가
-# 아니라 랭킹 집계 방식이었고, 같은 chunk_id(부모 EU/청크)끼리 최고
-# 점수만 남기고 재랭킹하면(max-pool) 오히려 baseline보다 앞선다
-# (full90: R@5 +8.1pp, R@10 +9.9pp vs 유닛 단위 랭킹, baseline 대비도
-# R@5 +2.7pp / R@10 +1.9pp).
+# 같은 EU의 유닛 여러 개가 top-k 슬롯을 몰아 차지해서 실제로 검색되는
+# "서로 다른 근거"의 개수가 줄어든다. 같은 chunk_id(부모 EU/청크)끼리
+# 최고 점수만 남기고 재랭킹하면(max-pool) 이 손해를 없앨 수 있다.
 #
-# top-1(EM/Recall@1)은 이론상 dedupe 전후로 항상 동일하다 — 전역 1등
-# 유닛은 자기 그룹 안에서도 항상 최고 점수이므로. 실측상 코사인 유사도
-# 동률(같은 표의 분할 조각들이 caption/context를 그대로 공유하는 경우,
-# split.py의 문맥 반복 수정 참고)로 인해 극히 드물게(2725건 중 net +3)
-# 갈리지만 무해한 노이즈로 확인됨.
+# top-1(EM/Recall@1)은 dedupe 전후로 항상 동일하다 — 전역 1등 유닛은
+# 자기 그룹 안에서도 항상 최고 점수이므로.
 
 def dedupe_by_chunk_id(
     results: list,
@@ -107,9 +90,8 @@ def dedupe_by_chunk_id(
 
     벡터스토어의 similarity_search() 계열 함수는 이미 관련도 내림차순으로
     정렬해서 반환하므로, "정렬된 순서에서 그룹당 첫 등장만 채택"이
-    "그룹별 최고 점수로 재랭킹"과 결과가 같다 — 점수를 따로 비교할 필요가
-    없다. 그래서 이 함수는 (Document, score) 튜플 리스트든 Document
-    리스트든 둘 다 받는다.
+    "그룹별 최고 점수로 재랭킹"과 결과가 같다. (Document, score) 튜플
+    리스트든 Document 리스트든 둘 다 받는다.
 
     사용 예시(직접 vectorstore를 쓸 때)::
 
@@ -123,12 +105,10 @@ def dedupe_by_chunk_id(
             반환한, 이미 정렬된 검색 결과. Document 리스트 또는
             (Document, score) 튜플 리스트.
         k: dedupe 후 상위 k개만 반환. None이면 dedupe만 하고 전부 반환.
-        key: 그룹핑에 쓸 metadata 키. 기본 "chunk_id"
-            (EvidenceUnit.metadata/export.TextChunk.metadata 둘 다 채워줌).
+        key: 그룹핑에 쓸 metadata 키. 기본 "chunk_id".
 
     Returns:
-        입력과 같은 형태(튜플이면 튜플, Document면 Document)의 리스트,
-        중복 chunk_id 제거 + (k가 있으면) 상위 k개로 자름.
+        입력과 같은 형태의 리스트, 중복 chunk_id 제거 + (k가 있으면) 상위 k개로 자름.
     """
     seen: set = set()
     deduped: list = []
@@ -148,13 +128,12 @@ def dedupe_by_chunk_id(
 class EvidenceRetriever:
     """max-pool dedupe가 기본으로 켜진 검색 래퍼.
 
-    `vectorstore.as_retriever()` 대신 이걸 쓰면 Recall@5/10이 개선된다
-    (docs/Benchmark.md §06 실측 근거). LangChain의 `BaseRetriever`를
-    상속하지 않은 얇은 래퍼라 버전 호환성 문제가 없다 — `get_relevant_documents()`
-    (구버전 API)와 `invoke()`(신버전 API) 둘 다 제공한다.
+    `vectorstore.as_retriever()` 대신 이걸 쓰면 Recall@5/10이 개선된다.
+    LangChain의 `BaseRetriever`를 상속하지 않은 얇은 래퍼라 버전 호환성
+    문제가 없다 — `get_relevant_documents()`(구버전 API)와 `invoke()`
+    (신버전 API) 둘 다 제공한다.
 
-    dedupe=False로 끄면 기존(유닛 단위 flat 랭킹) 동작으로 되돌아간다 —
-    커스텀 재랭킹을 직접 짜고 싶은 경우를 위한 탈출구.
+    dedupe=False로 끄면 기존(유닛 단위 flat 랭킹) 동작으로 되돌아간다.
     """
 
     def __init__(
@@ -169,12 +148,9 @@ class EvidenceRetriever:
             vectorstore: `similarity_search_with_score(query, k)`를 제공하는
                 LangChain VectorStore(FAISS, Chroma 등).
             k: 최종 반환할 문서 수.
-            fetch_k: dedupe 전에 벡터스토어에서 미리 가져올 후보 수. EU 하나가
-                retrieval_units개로 쪼개져 있으므로 k보다 넉넉해야
-                dedupe 후에도 k개가 채워진다. 기본값은 `max(k * 4, 20)` —
-                실측(§06)에서 EU 하나당 유닛 수 평균이 문서마다 다르므로
-                여유 있게 잡은 경험적 값. 표가 아주 큰(분할 많이 된) 문서면
-                더 키우는 게 안전하다.
+            fetch_k: dedupe 전에 벡터스토어에서 미리 가져올 후보 수. EU
+                하나가 retrieval_units개로 쪼개져 있으므로 k보다 넉넉해야
+                dedupe 후에도 k개가 채워진다. 기본값은 `max(k * 4, 20)`.
             dedupe: False면 max-pool 없이 기존 flat 랭킹 그대로 반환.
         """
         self.vectorstore = vectorstore
