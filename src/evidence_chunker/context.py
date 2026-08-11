@@ -296,7 +296,7 @@ def attach_context_paragraphs(
     eu: "EvidenceUnit",
     parsed: "ParsedDoc",
     bbox_threshold: float = CONTEXT_WINDOW_PT,
-    sim_threshold: float = 0.40,
+    sim_threshold: float = 0.0,
     table_bbox: "BBox | None" = None,
 ) -> "EvidenceUnit":
     """
@@ -306,7 +306,11 @@ def attach_context_paragraphs(
         eu:             EU 기본 뼈대
         parsed:         파서 추상화 문서 (parser.base.ParsedDoc)
         bbox_threshold: 표 위아래 수집 범위 (PDF 포인트). 기본 300pt
-        sim_threshold:  임베딩 유사도 임계값. 기본 0.40
+        sim_threshold:  임베딩 유사도 임계값. 기본 0.0(사실상 무필터).
+                        dev20 스윕(Benchmark.md §11)에서 0.40 대비
+                        context_dependent EM +12.5pp, 감시 지표 저해 없음
+                        확인 후 변경. 더 엄격한 필터가 필요하면 호출자가
+                        직접 값을 올려서 넘기면 됨(파라미터는 유지).
         table_bbox:     이 EU가 속한 표의 원본(TOPLEFT 정규화) bbox. 호출자가
                          parsed.tables를 순회하며 이미 알고 있는 값을 직접
                          넘겨주는 게 정확하다 — find_duplicate_tables()로

@@ -64,7 +64,7 @@ def _table_bottomleft_bbox(bbox, page_height: float) -> dict:
 def build_evidence_units(
     parsed: "ParsedDoc",
     bbox_threshold: float = 300.0,
-    sim_threshold: float = 0.40,
+    sim_threshold: float = 0.0,
     doc_id: str | None = None,
 ) -> list[EvidenceUnit]:
     if doc_id is None:
@@ -190,7 +190,14 @@ class EvidenceChunker:
         artifacts_path: Docling 로컬 모델 경로. parser를 직접 넘기면 무시됨.
                         None이면 HuggingFace Hub에서 자동 다운로드.
         bbox_threshold: 표 위아래 단락 수집 범위 (PDF 포인트). 기본 300pt.
-        sim_threshold:  코사인 유사도 임계값. 기본 0.40.
+        sim_threshold:  코사인 유사도 임계값. 기본 0.0(사실상 무필터 — bbox
+                        단일 게이트). Roadmap 7 dev20 스윕(0.00~0.60, 13개
+                        지점) 실측 근거: 코사인 게이트를 엄격하게 걸수록
+                        context_dependent EM이 단조 감소(0.319→0.111),
+                        감시 지표(cell_value/table_about)는 저해 없음.
+                        Benchmark.md §11 참고. 파라미터 자체는 확장성을 위해
+                        남겨둠(더 엄격한 필터링이 필요하면 호출자가 올릴 수
+                        있음).
     """
 
     def __init__(
@@ -198,7 +205,7 @@ class EvidenceChunker:
         parser: "PdfParser | None" = None,
         artifacts_path: str | None = None,
         bbox_threshold: float = 300.0,
-        sim_threshold: float = 0.40,
+        sim_threshold: float = 0.0,
     ) -> None:
         self.parser = parser
         self.artifacts_path = artifacts_path
