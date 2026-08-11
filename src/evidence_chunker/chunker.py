@@ -10,9 +10,7 @@ Usage:
     chunker = EvidenceChunker()
     eus = chunker.chunk("paper.pdf")                # List[EvidenceUnit] (표만)
 
-    # build_corpus()는 표(EU) + 일반 본문을 한 번에 합쳐서 반환한다. EU가
-    # 이미 흡수한 문단은 자동으로 중복 제거되므로, 이 한 줄 호출만으로
-    # 바로 벡터스토어에 넣을 수 있는 최종 코퍼스가 나온다.
+    # build_corpus()는 표(EU) + 일반 본문을 한 번에 합쳐서 반환한다.
     chunks = chunker.build_corpus("paper.pdf")      # List[RetrievalChunk] (표+본문)
     docs = to_langchain(chunks)                     # List[LangChainDocument]
 
@@ -37,29 +35,15 @@ if TYPE_CHECKING:
     from .parser.base import ParsedDoc, PdfParser
 
 
-# ---------------------------------------------------------------------------
-# bbox 역변환
-#
-# EvidenceUnit.bbox는 BOTTOMLEFT 유지가 공개 계약(geometry.normalize_bbox
-# 참고)인데, TableBlock.bbox는 파서 경계에서 이미 TOPLEFT로 정규화돼 있다.
-# parser.docling._to_bbox와 정확히 같은 식(new = page_height - old)이라
-# 자기 역함수 — 그대로 다시 적용하면 원래 BOTTOMLEFT raw 값이 나온다.
-# ---------------------------------------------------------------------------
-
 def _table_bottomleft_bbox(bbox, page_height: float) -> dict:
+    """TOPLEFT 정규화된 TableBlock.bbox를 raw BOTTOMLEFT dict로 되돌린다.
+
+    EvidenceUnit.bbox는 BOTTOMLEFT 유지가 공개 계약(geometry.normalize_bbox
+    참고)이라 필요 — parser.docling._to_bbox와 같은 식이 자기 역함수라
+    그대로 다시 적용하면 원래 BOTTOMLEFT 값이 나온다.
+    """
     return {"l": bbox.l, "t": page_height - bbox.t, "r": bbox.r, "b": page_height - bbox.b}
 
-
-# ---------------------------------------------------------------------------
-# EU 빌더
-#
-# scripts/06_build_eu.py의 build_evidence_units()를 정본으로 채택해 그대로
-# 옮김 — chunker.EvidenceChunker._build_eu()(구 버전)가 아니라 이쪽이 벤치마크
-# 수치(baseline/recall_before.txt 등)를 만든 구현이기 때문. 호출 순서(먼저
-# attach_context_paragraphs, 그 다음 flatten/table_abstract)도 06 그대로
-# 유지 — 순서를 바꾸면 abstract-as-similarity-reference 동작이 달라진다
-# (별도 커밋에서 의도적으로 다룸).
-# ---------------------------------------------------------------------------
 
 def build_evidence_units(
     parsed: "ParsedDoc",
@@ -67,6 +51,18 @@ def build_evidence_units(
     sim_threshold: float = 0.40,
     doc_id: str | None = None,
 ) -> list[EvidenceUnit]:
+    """파싱된 문서의 표들을 EvidenceUnit 리스트로 변환.
+
+    Args:
+        parsed: 파서가 만든 내부 문서 모델(표/텍스트/페이지 크기).
+        bbox_threshold: 표 위아래 단락 수집 범위 (PDF 포인트).
+        sim_threshold: 문맥 단락 채택 코사인 유사도 임계값.
+        doc_id: eu_id 접두사로 쓸 문서 식별자. None이면 "doc".
+
+    Returns:
+        생성된 EvidenceUnit 리스트 (분할 전, split_oversized_units()는
+        호출자가 별도로 적용).
+    """
     if doc_id is None:
         doc_id = "doc"
 
@@ -80,8 +76,8 @@ def build_evidence_units(
     )
     from .filters import find_duplicate_tables, is_toc_or_lof_decoy
 
-    # ── 중복 표 감지: Docling이 표 1개를 TableItem 2개로 중복 인식하는 경우
-    #    제거되는 쪽(loser)의 캡션이 direct로 잡혀 있으면 남는 쪽(winner)에 물려줌 ──
+    # Docling이 표 1개를 TableItem 2개로 중복 인식하는 경우 제거되는 쪽의
+    # 캡션을 남는 쪽에 물려준다.
     dup_drop_map = find_duplicate_tables(parsed)
     dup_donor_caption = {}
     for loser_idx, winner_idx in dup_drop_map.items():
@@ -98,7 +94,7 @@ def build_evidence_units(
             continue  # 중복 표: 더 세밀하게 구조화된 쪽만 남김
 
         if is_toc_or_lof_decoy(parsed, table_block):
-            continue  # v03 p3 필터: 목차/그림·표 목록이 표로 오인식된 경우 EU 생성 대상에서 제외
+            continue
 
         pg = table_block.page_no
         if pg == -1:
@@ -108,23 +104,19 @@ def build_evidence_units(
         page_counters[pg] = idx + 1
         eu_id = f"{doc_id}-p{pg}-{idx}"
 
-        # ── 캡션 (RefItem 직접 연결 + bbox fallback, caption.py) ──
         cap_mapping = map_table_caption(parsed, table_block, table_index)
         if cap_mapping.confidence == "none" and table_index in dup_donor_caption:
             cap_mapping = dup_donor_caption[table_index]
         caption_text = cap_mapping.caption_text
         caption_confidence = cap_mapping.confidence
 
-        # ── 각주 (TableBlock.footnote_refs — parser가 이미 인덱스로 해석해둠) ──
         footnote_text = None
         if table_block.footnote_refs:
             footnote_text = parsed.texts[table_block.footnote_refs[0]].text or None
 
-        # ── 표 HTML (TableBlock.html — parser가 파싱 시점에 미리 계산해둠) ──
         table_html = table_block.html
 
-        # ── bbox 정규화 (EvidenceUnit.bbox는 BOTTOMLEFT 유지가 공개 계약이라
-        #    TOPLEFT로 정규화된 table_block.bbox를 raw로 되돌린 뒤 정규화) ──
+        # bbox 정규화 (BOTTOMLEFT 복원 이유는 _table_bottomleft_bbox() 참고)
         width, height = parsed.page_sizes.get(pg, (1.0, 1.0))
         raw_bbox = _table_bottomleft_bbox(table_block.bbox, height)
         norm_bbox = normalize_bbox(raw_bbox, width, height)
@@ -140,14 +132,11 @@ def build_evidence_units(
             caption_confidence=caption_confidence,
         )
 
-        # ── 섹션 헤더 + 인접 단락 (bbox 거리 + 임베딩 유사도, context.py) ──
-        # table_bbox를 직접 넘김: eu_id의 페이지 내 순번은 dedup으로 parsed.tables의
-        # 스캔 순서와 어긋날 수 있어, eu_id 기반 재추정에 맡기면 안 됨.
+        # table_bbox를 직접 넘기는 이유는 attach_context_paragraphs() 참고.
         attach_context_paragraphs(
             eu, parsed, bbox_threshold, sim_threshold, table_bbox=table_block.bbox,
         )
 
-        # ── Row Flattening + 다단 헤더 처리 ─────────────────────────
         cells = table_block.cells
         num_rows = table_block.num_rows
         num_cols = table_block.num_cols
@@ -157,8 +146,8 @@ def build_evidence_units(
             s for row in sorted(eu.row_sentence_map) for s in eu.row_sentence_map[row]
         ]
 
-        # ── Table Abstract ───────────────────────────────────────────
         col_map = build_col_header_map(cells, num_cols)
+        # eu.section_header가 이미 채워져 있어야 함 — 순서를 바꾸면 안 됨.
         eu.table_abstract = build_table_abstract(caption_text, col_map, num_rows, eu.section_header)
 
         eu_list.append(eu)
@@ -174,23 +163,18 @@ class EvidenceChunker:
     """
     PDF → Evidence Unit 파이프라인 래퍼.
 
-    Docling으로 파싱 후 EvidenceUnit을 구성하고,
-    context_attacher로 인접 단락을 붙여 반환.
+    PDF를 파싱(기본 Docling, parser 주입 시 교체 가능)해 표를 EvidenceUnit으로
+    구성하고, context.attach_context_paragraphs()로 인접 단락·섹션 헤더를
+    붙여 반환한다.
 
     Args:
-        parser:         PdfParser 프로토콜(parse(path) -> ParsedDoc) 구현체.
-                        None이면 기본 DoclingParser 플로우(아래 artifacts_path
-                        반영)를 그대로 씀. chunk()는 parser가 뭐든 그대로
-                        위임하므로 완전히 교체 가능 — 표 추출 알고리즘
-                        (caption/context/filters/flatten)이 ParsedDoc만 알고
-                        Docling을 모르기 때문(tests/test_no_docling_dependency.py
-                        참고). build_corpus()는 일반 본문 청킹이 Docling
-                        HybridChunker에 직접 결합돼 있어 parser를 넘기면
-                        NotImplementedError — 표만 필요하면 chunk()를 쓸 것.
+        parser: PdfParser 프로토콜(parse(path) -> ParsedDoc) 구현체. None이면
+            기본 DoclingParser로 파싱(_get_parsed() 참고). chunk()만 교체
+            가능 — build_corpus()는 지원 안 함(build_corpus() 참고).
         artifacts_path: Docling 로컬 모델 경로. parser를 직접 넘기면 무시됨.
-                        None이면 HuggingFace Hub에서 자동 다운로드.
+            None이면 HuggingFace Hub에서 자동 다운로드.
         bbox_threshold: 표 위아래 단락 수집 범위 (PDF 포인트). 기본 300pt.
-        sim_threshold:  코사인 유사도 임계값. 기본 0.40.
+        sim_threshold: 코사인 유사도 임계값. 기본 0.40.
     """
 
     def __init__(
@@ -222,14 +206,12 @@ class EvidenceChunker:
         build_corpus()를 쓸 것.
 
         Args:
-            pdf_path: PDF 파일 경로
-            doc_id:   문서 식별자. 기본은 파일명 stem(예: "paper.pdf" → "paper").
-                      PDF 여러 개를 한 벡터스토어에 넣을 때 eu_id 충돌(서로 다른
-                      문서의 "eu-p3-0" 같은 것)을 막는 접두사로 쓰인다. 같은
-                      파일명이 다른 디렉터리에 있을 수 있으면 직접 지정할 것.
+            pdf_path: PDF 파일 경로.
+            doc_id: 문서 식별자. 기본은 파일명 stem(EvidenceUnit.doc_id 참고).
 
         Returns:
-            List[EvidenceUnit]
+            추출된 EvidenceUnit 리스트. 512토큰(DEFAULT_TOKEN_LIMIT) 초과 EU는
+            행 단위로 분할된 상태로 반환된다.
         """
         pdf_path = str(pdf_path)
         doc_id = doc_id or Path(pdf_path).stem
@@ -245,10 +227,10 @@ class EvidenceChunker:
         """
         PDF를 표(EU) + 일반 본문을 합친 검색 코퍼스로 변환.
 
-        EU가 context_before/after로 이미 흡수한 문단은 자동으로 중복
-        제거되므로, 이 한 번 호출로 바로 벡터스토어에 넣을 수 있는 최종
-        코퍼스가 나온다 (같은 문단이 EU와 일반 청크 양쪽에 중복 등장해
-        검색 코퍼스 안에서 서로 경쟁하는 카니발라이제이션 방지).
+        EU가 이미 흡수한 문단과 겹치는 일반 청크는 자동 제거되므로(중복
+        등장으로 인한 카니발라이제이션 방지 — 자세한 내용은
+        _build_text_chunks() 참고), 이 한 번 호출로 바로 벡터스토어에
+        넣을 수 있는 최종 코퍼스가 나온다.
 
         Args:
             pdf_path: PDF 파일 경로
@@ -262,9 +244,9 @@ class EvidenceChunker:
             본문 청크(EU 아님)를 뜻한다.
 
         Raises:
-            NotImplementedError: 생성자에 parser를 넘긴 경우. 일반 본문
-                청킹(HybridChunker)이 Docling에 직접 결합돼 있어서다 —
-                표만 필요하면 chunk()를 쓸 것(그쪽은 parser 교체 가능).
+            NotImplementedError: 생성자에 parser를 넘긴 경우. 표만 필요하면
+                chunk()를 쓸 것(그쪽은 parser 교체 가능) — 자세한 이유는
+                아래 예외 메시지 참고.
         """
         from .export import TextChunk
         from .parser.docling import DoclingParser
@@ -292,11 +274,9 @@ class EvidenceChunker:
         표와 무관한 일반 본문 청크 생성 (Docling HybridChunker), 원본 청크
         그대로 반환 (export.TextChunk 래핑은 build_corpus()가 함).
 
-        EU가 context_before/after로 이미 흡수한 문단과 겹치는 청크는
-        export.filter_consumed_paragraphs()로 제거한다 — 그렇게 안 하면
-        같은 문단이 EU 안에도, 여기 일반 청크로도 중복 등장해서 검색
-        코퍼스 안에서 서로 경쟁하는 문제(카니발라이제이션)가 생긴다
-        (Version01 벤치마크에서 EU 검색 실패의 주요 원인으로 확인됨).
+        EU가 이미 흡수한 문단과 겹치는 청크는
+        export.filter_consumed_paragraphs()로 제거한다 — 카니발라이제이션
+        방지 이유는 그 함수 참고.
         """
         from docling.chunking import HybridChunker
         from docling_core.types.doc import DocItemLabel
@@ -315,7 +295,12 @@ class EvidenceChunker:
 
     def _get_parsed(self, pdf_path: str) -> "ParsedDoc":
         """parser가 주입됐으면 그대로 위임, 아니면 기본 Docling 플로우
-        (artifacts_path 반영)로 파싱 후 ParsedDoc으로 변환."""
+        (artifacts_path 반영)로 파싱 후 ParsedDoc으로 변환.
+
+        chunk()가 parser를 완전히 교체 가능한 지점 — 표 추출 알고리즘
+        (caption/context/filters/flatten)이 ParsedDoc만 알고 Docling을
+        모르기 때문(tests/test_no_docling_dependency.py 참고).
+        """
         if self.parser is not None:
             return self.parser.parse(pdf_path)
         from .parser.docling import DoclingParser
