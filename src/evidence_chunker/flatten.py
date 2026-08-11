@@ -8,7 +8,6 @@ flatten.py
   - build_row_header_map  : 행헤더 행 매핑 (row_span 처리)
   - infer_headers_fallback: Docling이 헤더 태깅 못 했을 때 휴리스틱 추론
   - flatten_to_sentences  : 셀 → "행헤더 | 열헤더: 값" 구조화 문자열 (임베딩용)
-                            [8/3] 한글 문법 문장에서 언어 무관 key:value로 변경
   - detect_cell_marker    : 셀 내 각주 마커(*†‡) 감지
   - build_table_abstract  : 표 전체 요약 문자열 (multi-granularity 검색용)
 """
@@ -21,10 +20,6 @@ from typing import Optional
 # 각주 마커 패턴 (유니코드 포함)
 _MARKER_RE = re.compile(r'[*†‡※#]')
 
-
-# ---------------------------------------------------------------------------
-# 1. 열헤더 맵 구성 (다단/병합 처리)
-# ---------------------------------------------------------------------------
 
 def build_col_header_map(cells: list[dict], num_cols: int) -> dict[int, str]:
     """
@@ -56,10 +51,6 @@ def build_col_header_map(cells: list[dict], num_cols: int) -> dict[int, str]:
     return col_map
 
 
-# ---------------------------------------------------------------------------
-# 2. 행헤더 맵 구성 (row_span 처리)
-# ---------------------------------------------------------------------------
-
 def build_row_header_map(cells: list[dict], num_rows: int) -> dict[int, str]:
     """
     row_header=True 셀을 수집해 row_index → 헤더 텍스트 매핑 반환.
@@ -86,10 +77,6 @@ def build_row_header_map(cells: list[dict], num_rows: int) -> dict[int, str]:
     return row_map
 
 
-# ---------------------------------------------------------------------------
-# 3. 헤더 추론 폴백
-# ---------------------------------------------------------------------------
-
 def infer_headers_fallback(cells: list[dict], num_cols: int) -> dict[int, str]:
     """
     column_header 태깅이 전혀 없을 때 첫 번째 행을 헤더로 추정.
@@ -100,7 +87,6 @@ def infer_headers_fallback(cells: list[dict], num_cols: int) -> dict[int, str]:
         key=lambda x: x.get("start_col_offset_idx", 0),
     )
 
-    # 첫 행이 전부 숫자패턴이면 헤더로 쓰기 부적합
     def _is_numeric(text: str) -> bool:
         return bool(re.match(r'^[\d\s.,+\-±%()]+$', text.strip()))
 
@@ -112,10 +98,6 @@ def infer_headers_fallback(cells: list[dict], num_cols: int) -> dict[int, str]:
 
     return col_map
 
-
-# ---------------------------------------------------------------------------
-# 4. 각주 마커 감지
-# ---------------------------------------------------------------------------
 
 def detect_cell_marker(text: str) -> tuple[str, Optional[str]]:
     """
@@ -132,10 +114,6 @@ def detect_cell_marker(text: str) -> tuple[str, Optional[str]]:
     return text.strip(), None
 
 
-# ---------------------------------------------------------------------------
-# 5. 행 플래트닝 (핵심)
-# ---------------------------------------------------------------------------
-
 def group_sentences_by_row(
     cells: list[dict],
     num_rows: int,
@@ -146,12 +124,8 @@ def group_sentences_by_row(
     표 셀 데이터를 자연어 문장으로 변환하되, 원본 표의 행 인덱스
     (start_row_offset_idx)별로 묶어서 반환.
 
-    table_splitter가 표를 행 단위로 분할할 때, 분할된 조각에 해당 행의
-    flattened_rows 문장만 함께 실어 보내기 위해 사용한다. 그렇지 않으면
-    분할된 EU는 자연어 문장 없이 raw table_html만 남아 임베딩 검색 신호를
-    잃는다 (retrieval_units가 표 요약 1개 유닛으로 쪼그라듦).
-
-    처리 순서 및 문장 포맷은 flatten_to_sentences() 참고.
+    split.py가 표를 행 단위로 분할할 때, 분할된 조각에 해당 행의
+    flattened_rows 문장만 함께 실어 보내기 위해 사용한다.
 
     Returns:
         {row_offset_idx: [문장, ...]}  — 헤더 행은 포함되지 않음
@@ -159,14 +133,12 @@ def group_sentences_by_row(
     col_map = build_col_header_map(cells, num_cols)
     row_map = build_row_header_map(cells, num_rows)
 
-    # 열헤더 없으면 폴백
     if not col_map:
         col_map = infer_headers_fallback(cells, num_cols)
 
     grouped: dict[int, list[str]] = defaultdict(list)
 
     for cell in cells:
-        # 헤더 셀은 문장화 대상 아님
         if cell.get("column_header") or cell.get("row_header"):
             continue
 
@@ -184,15 +156,8 @@ def group_sentences_by_row(
         col_header = col_map.get(col, f"Col{col}")
         row_header = row_map.get(row)
 
-        # [8/3 재정리] 기존엔 "{row}의 {col}는 {value}이다." 한글 문법 문장을
-        # if/else로 케이스(row_header 있음/없음, marker+footnote/marker만)
-        # 별로 다른 템플릿 문자열을 골라 조립했음. "문장을 만들 필요가
-        # 있는가"라는 지적을 받고 재검토 -- 애초에 문장(어느 언어든 문법)이
-        # 필요한 게 아니라 각 셀을 검색 가능한 짧은 단위로 쪼개는 게 목적
-        # (W4 회귀 노트: 256토큰 잘림 문제 해결용). 그러면 "케이스별로 다른
-        # 템플릿을 고르는" 대신, build_table_abstract()가 이미 쓰던 "있는
-        # 값만 모아서 이어붙이기" 패턴으로 통일하는 게 맞다 -- 분기가 아니라
-        # 데이터가 있고 없고의 문제이므로 리스트 필터링으로 표현.
+        # 언어 무관 key:value 포맷 — 각 셀을 검색 가능한 짧은 단위로 쪼개는 게
+        # 목적이라 문법 문장("~의 ~는 ~이다")보다 이쪽이 임베딩에 유리하다.
         label_parts = [p for p in (row_header, col_header) if p]
         sentence = f"{' | '.join(label_parts)}: {value}"
         if marker:
@@ -218,10 +183,6 @@ def flatten_to_sentences(
     return [sentence for row in sorted(grouped) for sentence in grouped[row]]
 
 
-# ---------------------------------------------------------------------------
-# 6. 표 단위 요약 (Table Abstract)
-# ---------------------------------------------------------------------------
-
 def build_table_abstract(
     caption_text: Optional[str],
     col_map: dict[int, str],
@@ -232,8 +193,7 @@ def build_table_abstract(
     LLM 없이 규칙 기반으로 표 요약 생성.
     광범위 질의("지역별 매출 표가 어디 있어?")에 대한 검색용.
 
-    포맷 (8/3 개정, 한글 라벨 -> 언어 무관 구조 라벨):
-        "[섹션헤더] > [캡션]. Columns: [열헤더 목록]. [N] data row(s)."
+    포맷(언어 무관 구조 라벨): "[섹션헤더] > [캡션]. Columns: [열헤더 목록]. [N] data row(s)."
     """
     parts: list[str] = []
 
@@ -243,10 +203,6 @@ def build_table_abstract(
     if caption_text:
         parts.append(caption_text)
 
-    # [8/3] "열: "/"총 N행 데이터." 한글 라벨 제거 -- group_sentences_by_row()와
-    # 동일한 이유(영어 PDF + 영어 중심 임베딩 모델). table_about 유형(열 이름/
-    # 행 개수를 묻는 질문)이 이 table_abstract에서 답을 찾는 경우가 많아서
-    # flattened_rows 쪽만 고치면 이 유형은 여전히 안 고쳐진 상태로 남았을 것.
     cols = [v for v in col_map.values() if v]
     if cols:
         parts.append("Columns: " + ", ".join(cols[:6]) + ("..." if len(cols) > 6 else ""))
