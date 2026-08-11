@@ -1,10 +1,11 @@
 """
-bbox_utils.py
+geometry.py
 
 bbox 좌표 변환 유틸리티.
 
-interfaces.py는 EvidenceUnit 데이터클래스 정의만 담당하고, 좌표 변환 로직은
-여기로 분리 (langchain_wrapper.py가 LangChain 변환 로직을 분리한 것과 동일한 패턴).
+unit.py는 EvidenceUnit 데이터클래스 정의만 담당하고, 좌표 변환 로직은
+여기로 분리 (export/ 패키지가 LangChain/LlamaIndex 변환 로직을 분리한 것과
+동일한 패턴).
 """
 
 from __future__ import annotations
