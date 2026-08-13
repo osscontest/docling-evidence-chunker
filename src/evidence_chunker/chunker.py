@@ -48,7 +48,7 @@ def _table_bottomleft_bbox(bbox, page_height: float) -> dict:
 def build_evidence_units(
     parsed: "ParsedDoc",
     bbox_threshold: float = 300.0,
-    sim_threshold: float = 0.40,
+    sim_threshold: float = 0.0,
     doc_id: str | None = None,
 ) -> list[EvidenceUnit]:
     """파싱된 문서의 표들을 EvidenceUnit 리스트로 변환.
@@ -174,7 +174,8 @@ class EvidenceChunker:
         artifacts_path: Docling 로컬 모델 경로. parser를 직접 넘기면 무시됨.
             None이면 HuggingFace Hub에서 자동 다운로드.
         bbox_threshold: 표 위아래 단락 수집 범위 (PDF 포인트). 기본 300pt.
-        sim_threshold: 코사인 유사도 임계값. 기본 0.40.
+        sim_threshold: 코사인 유사도 임계값. 기본 0.0(사실상 무필터 — bbox
+            단일 게이트). 더 엄격한 필터링이 필요하면 호출자가 올릴 수 있음.
     """
 
     def __init__(
@@ -182,7 +183,7 @@ class EvidenceChunker:
         parser: "PdfParser | None" = None,
         artifacts_path: str | None = None,
         bbox_threshold: float = 300.0,
-        sim_threshold: float = 0.40,
+        sim_threshold: float = 0.0,
     ) -> None:
         self.parser = parser
         self.artifacts_path = artifacts_path
