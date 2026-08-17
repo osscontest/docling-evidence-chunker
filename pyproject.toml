@@ -16,7 +16,7 @@ authors = [
 dependencies = [
     "docling>=2.0.0",
     "tiktoken>=0.7.0",
-    "beautifulsoup4>=4.12",       # split.py — 이전에는 누락돼 있었음
+    "beautifulsoup4>=4.12",       # split.py의 표 HTML 파싱/재조립
 ]
 
 [project.optional-dependencies]

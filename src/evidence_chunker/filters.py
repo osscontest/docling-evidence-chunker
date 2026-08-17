@@ -83,10 +83,11 @@ def find_duplicate_tables(parsed: "ParsedDoc", overlap_ratio: float = 0.6) -> di
     return drop_map
 
 
-P3_MAX_PAGE = 5
-P3_NUMERIC_RATIO_THRESHOLD = 0.7
-P3_MIN_ROWS = 3
-P3_HEADER_KEYWORDS = ("content", "list of table", "list of figure")
+# is_toc_or_lof_decoy()의 판정 기준.
+TOC_MAX_PAGE = 5            # 목차/표 목록은 문서 앞부분에만 나온다고 가정
+TOC_NUMERIC_RATIO_THRESHOLD = 0.7   # 마지막 열이 대부분 숫자(= 페이지 번호)
+TOC_MIN_ROWS = 3
+TOC_HEADER_KEYWORDS = ("content", "list of table", "list of figure")
 
 
 def _has_toc_like_header(parsed: "ParsedDoc", page_no: int) -> bool:
@@ -99,7 +100,7 @@ def _has_toc_like_header(parsed: "ParsedDoc", page_no: int) -> bool:
         if item.page_no not in (page_no, page_no - 1):
             continue
         text = item.text.strip().lower()
-        if any(kw in text for kw in P3_HEADER_KEYWORDS):
+        if any(kw in text for kw in TOC_HEADER_KEYWORDS):
             return True
     return False
 
@@ -107,9 +108,9 @@ def _has_toc_like_header(parsed: "ParsedDoc", page_no: int) -> bool:
 def is_toc_or_lof_decoy(
     parsed: "ParsedDoc",
     table: "TableBlock",
-    max_page: int = P3_MAX_PAGE,
-    numeric_ratio_threshold: float = P3_NUMERIC_RATIO_THRESHOLD,
-    min_rows: int = P3_MIN_ROWS,
+    max_page: int = TOC_MAX_PAGE,
+    numeric_ratio_threshold: float = TOC_NUMERIC_RATIO_THRESHOLD,
+    min_rows: int = TOC_MIN_ROWS,
 ) -> bool:
     """목차(ToC)나 그림/표 목록(LoF)이 표로 오인식된 경우 True.
 

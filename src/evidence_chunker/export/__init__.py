@@ -11,10 +11,12 @@ export.langchain/export.llamaindex의 to_*() 함수가 타입을 구분하는 is
 """
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 
-@runtime_checkable
+# 타입 힌트 전용 프로토콜 — isinstance()로 검사하지 않는다. 데이터 속성만
+# 가진 Protocol은 런타임 검사를 지원하지 않고, 애초에 to_*() 함수들이 타입
+# 분기 없이 두 타입을 그대로 처리하는 것이 이 프로토콜의 목적이다.
 class RetrievalChunk(Protocol):
     chunk_id: str
     is_atomic: bool

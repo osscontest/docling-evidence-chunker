@@ -10,11 +10,10 @@ parser.base.ParsedDoc 기반, Docling DoclingDocument를 직접 만지지 않는
 좌표는 TOPLEFT 기준(parser/base.py 참고) — 이 모듈의 모든 상/하 부등호가
 원본 BOTTOMLEFT와 반대다.
 
-sim_threshold 기본값이 0.0으로 바뀐 뒤로는 _embedding_filter()가
-model.encode() 호출 자체를 스킵한다(아래 참고) — 기본 설정으로 쓰면
-sentence-transformers/torch가 설치돼 있지 않아도 청킹이 그대로 동작한다.
-sim_threshold를 0 초과로 직접 올려서 넘기는 호출자만 그 무거운 의존성이
-필요하다(pyproject.toml의 optional extra로 분리됨).
+sim_threshold 기본값은 0.0이고, 이때 _embedding_filter()는 model.encode()
+호출 자체를 건너뛴다 — 즉 기본 설정에서는 sentence-transformers/torch가
+설치돼 있지 않아도 청킹이 그대로 동작한다. 0 초과 값을 직접 넘기는
+호출자만 그 무거운 의존성이 필요하다(pyproject.toml의 similarity extra).
 """
 
 from __future__ import annotations
@@ -36,6 +35,7 @@ ADJACENT_PAGE_EDGE_RATIO = 0.15  # 페이지 상하단 15% 이내일 때 인접 
 
 
 def _center_y(bbox: "BBox") -> float:
+    """bbox의 수직 중심. TOPLEFT라 값이 작을수록 페이지 위쪽이다."""
     return (bbox.t + bbox.b) / 2.0
 
 
@@ -227,14 +227,11 @@ def _embedding_filter(
     if not reference_text:
         return [(text, page) for _, text, page in candidates]
 
-    # [최적화] sim_threshold <= 0 이면 결과적으로 모든 후보가 통과한다
-    # (실측 코사인 유사도는 사실상 항상 0 이상 — Benchmark.md §11).
-    # 라이브러리 기본값이 0.0으로 바뀐 뒤(Roadmap 7) 이 분기가 사실상 항상
-    # 타므로, 결과가 뻔한 model.encode() 호출(문서당 가장 무거운 연산 — 임베딩
-    # 모델 로드 + 추론)을 아예 스킵한다. sentence-transformers/torch import도
-    # 여기서 걸리지 않으므로, 사용자가 sim_threshold를 0 이하로 두면(기본값)
-    # 그 무거운 패키지가 설치돼 있지 않아도 청킹이 그대로 동작한다
-    # (pyproject.toml에서 sentence-transformers를 optional extra로 내린 것과 짝).
+    # sim_threshold <= 0 이면 어차피 모든 후보가 통과한다(표 주변 단락의 실측
+    # 코사인 유사도는 음수로 내려가지 않는다). 기본값이 0.0이라 이 분기가 거의
+    # 항상 타므로, 결과가 정해진 채로 문서당 가장 무거운 연산(임베딩 모델
+    # 로드 + 추론)을 돌리지 않고 건너뛴다. sentence-transformers import도 여기서
+    # 걸리지 않으므로 기본 설정이면 그 패키지 없이도 청킹이 동작한다.
     if sim_threshold <= 0:
         return [(text, page) for _, text, page in candidates]
 
@@ -308,7 +305,11 @@ def attach_context_paragraphs(
         parsed, eu.page_no, table_bbox, bbox_threshold
     )
 
-    reference = eu.caption_text or eu.table_abstract or ""
+    # 기준 텍스트는 캡션뿐이다 — eu.table_abstract는 이 함수가 끝난 뒤에
+    # 채워지므로(chunker.build_evidence_units의 호출 순서) 여기서 참조해도
+    # 항상 비어 있다. 캡션이 없으면 빈 문자열이 되고, _embedding_filter()가
+    # 후보를 전부 통과시킨다.
+    reference = eu.caption_text or ""
     before_kept = _embedding_filter(before_candidates, reference, sim_threshold)
     after_kept  = _embedding_filter(after_candidates,  reference, sim_threshold)
 

@@ -2,12 +2,10 @@
 tokens.py의 tiktoken 인코더 로딩이 지연(lazy)되는지 확인.
 
 tiktoken.get_encoding()은 로컬 캐시가 없으면 인코더 파일을 네트워크에서
-받아온다. 예전에는 이걸 모듈 import 시점에 즉시 실행했는데, 그러면
-오프라인 환경(캐시도 없는 상태 — CI가 아닌 로컬 clean checkout 등)에서
+받아온다. 이걸 모듈 import 시점에 실행하면 오프라인 + 캐시 없는 환경에서
 `import evidence_chunker`(패키지 __init__.py가 chunker.py -> split.py ->
-tokens.py를 끌고 옴) 자체가 실패한다. CI는 네트워크가 있어서 이 문제를
-못 잡는다 — 애초에 이 패키지가 처음 겪었던 "패키징 누락이 CI를 못
-뚫고 통과" 사고와 같은 구조.
+tokens.py를 끌고 옴) 자체가 실패한다. 네트워크가 있는 CI에서는 재현되지
+않는 종류의 문제라, 지연 로딩을 테스트로 잠가둔다.
 """
 import tiktoken
 
@@ -16,11 +14,10 @@ def test_import_does_not_call_get_encoding(monkeypatch):
     """get_encoding()을 막아도(오프라인+캐시 없음 시뮬레이션) import는 성공해야 함.
 
     sys.modules에서 지웠다가 다시 import하는 동안 evidence_chunker.* 모듈
-    객체가 전부 새로 생기는데, 끝나고 원래대로 복원하지 않으면 다른 테스트
-    파일이 이미 들고 있는 클래스/함수 참조와 monkeypatch 대상 모듈이 서로
-    다른 객체가 되어버린다(실제로 test_pipeline_parity.py가 이렇게 깨졌던
-    적 있음 — 이 테스트가 먼저 돌면서 정리를 안 해 발생). 그래서
-    test_no_docling_dependency.py와 같은 저장/복원 패턴을 그대로 쓴다.
+    객체가 전부 새로 생긴다. 끝나고 원래대로 복원하지 않으면, 이미 클래스/
+    함수 참조를 들고 있는 다른 테스트 파일과 monkeypatch 대상 모듈이 서로
+    다른 객체가 되어 엉뚱하게 깨진다(test_pipeline_parity.py에서 실제로
+    발생). 그래서 test_no_docling_dependency.py와 같은 저장/복원 패턴을 쓴다.
     """
     def _blocked(*args, **kwargs):
         raise RuntimeError("get_encoding()이 import 시점에 불렸음 — 지연 로딩 깨짐")

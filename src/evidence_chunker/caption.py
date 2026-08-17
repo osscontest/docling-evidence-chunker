@@ -33,6 +33,11 @@ _CANDIDATE_LABEL_NAMES = {"caption", "section_header", "text"}
 _CAPTION_PATTERN = re.compile(r"(table|figure|fig|표|그림)\s*\.?\s*[A-Z]?\.?\s*\d+", re.IGNORECASE)
 _MIN_CAPTION_LEN = 8
 
+# 캡션 패턴은 텍스트 맨 앞 이 글자 수 안에서만 확인한다 — 전체 텍스트를
+# 훑으면 본문 중간의 우연한 참조("...as shown in Figure 2.2...")까지
+# 캡션으로 오탐한다.
+CAPTION_PREFIX_CHARS = 20
+
 # 표가 페이지 위/아래 이 비율 이내에 걸쳐 있을 때만 인접 페이지를 탐색한다
 # — 게이팅 없이 인접 페이지를 보면 무관한 옆 페이지 캡션을 잘못 채택할 수 있음.
 _ADJACENT_PAGE_EDGE_RATIO = 0.15
@@ -50,18 +55,16 @@ class CaptionMapping:
 
 
 def _center_y(bbox: "BBox") -> float:
+    """bbox의 수직 중심. TOPLEFT라 값이 작을수록 페이지 위쪽이다."""
     return (bbox.t + bbox.b) / 2.0
 
 
-# 캡션 패턴은 텍스트 맨 앞부분에서만 확인 (아래 CAPTION_PREFIX_CHARS 참고).
-CAPTION_PREFIX_CHARS = 20
-
-
 def _looks_like_caption(text: Optional[str]) -> bool:
-    """"Table 1", "<표 3>" 같은 번호 붙은 캡션 패턴인지 확인.
+    """번호 붙은 캡션 패턴("Table 1", "<표 3>" 등)인지 확인.
 
-    텍스트 앞부분(CAPTION_PREFIX_CHARS자)에서만 찾는다 — 전체 텍스트에서
-    찾으면 본문 중간의 우연한 참조("...Figure 2.2...")도 캡션으로 오탐한다.
+    표/그림 캡션을 모두 인정하는 넓은 패턴 — 그림 캡션까지 후보로 받아
+    confidence만 "inferred"로 낮추는 fallback 경로에서 쓴다. 텍스트
+    앞부분(CAPTION_PREFIX_CHARS자)만 보는 이유는 그 상수 주석 참고.
     """
     if not text or len(text.strip()) < _MIN_CAPTION_LEN:
         return False
