@@ -1,5 +1,5 @@
 """
-두 가지를 증명한다 (Stage 2 "빌더 통합" + "split 연결"의 실행 가능한 증거):
+EvidenceChunker.chunk()가 빌더와 분할을 제대로 엮고 있는지 두 각도로 잠근다:
 
 1. evidence_chunker.chunker.build_evidence_units() + split_oversized_units()를
    직접 합성한 결과가 chunk()가 낼 결과와 같은 모양이다 (빌더 결과를
@@ -11,8 +11,8 @@
 에서 미리 파싱한 doc을 주입할 방법이 없다. chunk()를 그대로 호출하면서
 동시에 build_evidence_units()로 별도 비교군을 만들면 같은 프로세스 안에서
 Docling 파싱이 두 번 일어나 메모리 누적으로 std::bad_alloc이 날 수 있다
-(README "큰 PDF 처리 시 메모리 부족" 참고 — 실제로 전체 스위트 실행 중
-재현됨). 그래서 1번은 파싱을 sample_doc 픽스처로 1회만 수행하고 chunk()를
+(전체 스위트를 돌릴 때 실제로 재현됨 — tests/conftest.py 참고). 그래서
+1번은 파싱을 sample_doc 픽스처로 1회만 수행하고 chunk()를
 직접 부르지 않으며, 2번은 아예 파싱을 monkeypatch로 걷어내고 배선만 본다.
 """
 from evidence_chunker import EvidenceChunker

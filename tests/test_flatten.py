@@ -1,12 +1,12 @@
 """
 flatten.py가 Docling과 완전히 무관함을 증명하는 테스트.
 
-이 파일의 함수들(build_col_header_map, build_row_header_map, group_sentences_
-by_row, build_table_abstract 등)은 애초에 doc 파라미터를 받지 않고 순수
-cells: list[dict] / num_rows / num_cols만 받는다 — Stage 4 파서 추상화
-작업에서 실제 전환 코드가 필요 없었던 유일한 모듈. 이 테스트는 그 사실을
-합성 데이터로 실증한다(PDF 파싱, Docling import 전부 불필요 — CI에서
-`pip uninstall docling` 후에도 통과해야 함).
+검증 대상 함수들(build_col_header_map, build_row_header_map,
+group_sentences_by_row, build_table_abstract 등)은 doc 파라미터를 받지 않고
+순수하게 cells: list[dict] / num_rows / num_cols만 받는다 — 파서 추상화
+과정에서 전환 코드가 아예 필요하지 않았던 유일한 모듈이다. 이 테스트는
+그 사실을 합성 데이터로 실증한다(PDF 파싱도 Docling import도 불필요 —
+`pip uninstall docling` 후에도 통과해야 한다).
 """
 from evidence_chunker.flatten import (
     build_col_header_map,

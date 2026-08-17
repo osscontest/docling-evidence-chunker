@@ -1,8 +1,11 @@
 """
 baseline.py
 
-baseline_url.py와 동일 로직, 로컬 PDF(data/pdfs/docling_technical_report.pdf) +
-Windows UTF-8 콘솔 출력 지원만 추가. W4 Recall@1 비교용.
+비교 기준선: Docling HybridChunker 단독으로 청킹했을 때의 Recall@1.
+
+baseline_url.py와 동일한 로직이며, arXiv에서 내려받는 대신 로컬 PDF
+(data/pdfs/docling_technical_report.pdf)를 쓰고 Windows 콘솔 UTF-8 출력만
+추가했다. EU 파이프라인 쪽 수치는 measure_recall_single.py에서 측정한다.
 """
 import sys
 import os
