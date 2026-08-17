@@ -130,7 +130,7 @@ def main():
     # ------------------------------------------------------------------
     section("EvidenceUnit 빌드")
     parsed = DoclingParser().from_doc(doc)
-    eu_list = build_evidence_units(parsed)
+    eu_list = build_evidence_units(parsed, doc_id="docling_technical_report")
     print(f"  원본 표 EU: {len(eu_list)}개")
 
     if APPLY_SPLIT:
