@@ -1,19 +1,20 @@
 """
 context.py
 
-인접 단락 탐지 모듈. attach_context_paragraphs(eu, parsed)가 메인 진입점.
+표 주변의 인접 해설 단락(context)을 탐지하고 병합하는 모듈. 메인 진입점은
+attach_context_paragraphs(eu, parsed) — bbox 거리로 후보 단락을 모으고
+(sim_threshold > 0이면) 코사인 유사도로 한 번 더 거른 뒤, 섹션 경계와
+멀티컬럼 레이아웃 예외를 처리해서 EU에 붙인다.
 
-bbox 거리로 후보 단락 수집 → 코사인 유사도 필터 → 섹션 경계/멀티컬럼
-예외처리.
+parser.base.ParsedDoc만 바라보고 DoclingDocument를 직접 다루지 않으며,
+좌표는 전부 TOPLEFT 기준이다(parser/base.py 참고) — 원본 BOTTOMLEFT와
+상/하 부등호 방향이 반대이니 주의.
 
-parser.base.ParsedDoc 기반, Docling DoclingDocument를 직접 만지지 않는다.
-좌표는 TOPLEFT 기준(parser/base.py 참고) — 이 모듈의 모든 상/하 부등호가
-원본 BOTTOMLEFT와 반대다.
-
-sim_threshold 기본값은 0.0이고, 이때 _embedding_filter()는 model.encode()
-호출 자체를 건너뛴다 — 즉 기본 설정에서는 sentence-transformers/torch가
-설치돼 있지 않아도 청킹이 그대로 동작한다. 0 초과 값을 직접 넘기는
-호출자만 그 무거운 의존성이 필요하다(pyproject.toml의 similarity extra).
+sim_threshold 기본값은 0.0이고, 이 경우 _embedding_filter()는
+model.encode() 호출 자체를 건너뛴다. 그래서 기본 설정으로 쓰면
+sentence-transformers/torch가 없어도 청킹이 그대로 동작한다 — 0보다 큰
+값을 명시적으로 넘기는 호출자만 그 의존성이 필요하다(pyproject.toml의
+similarity extra 참고).
 """
 
 from __future__ import annotations
@@ -97,9 +98,8 @@ def _has_section_boundary(
     """
     표와 단락 사이에 section_header가 있으면 True (과포함 방지).
 
-    TOPLEFT: above는 para_cy < section_cy < table_edge_y, below는
-    table_edge_y < section_cy < para_cy — BOTTOMLEFT 원본과 부등호가
-    통째로 뒤바뀐다.
+    TOPLEFT: above는 para_cy < section_cy < table_edge_y, 
+             below는 table_edge_y < section_cy < para_cy
     """
     from .parser.base import BlockLabel
 
@@ -128,9 +128,9 @@ def _collect_by_bbox(
     bbox 거리 기준 단락 수집. 같은 페이지 + 인접 페이지 경계 케이스 포함.
     섹션 경계를 넘는 단락은 항상 제외.
 
-    같은 컬럼 단락을 우선하고, 없으면 컬럼 제한 없이 재탐색한다(표가 본문
-    컬럼 그리드에 딱 안 맞게 배치된 경우 대비 — section_boundary 체크가
-    이미 다른 섹션 내용 유입을 막고 있어 안전함).
+    같은 컬럼 단락을 우선하고, 없으면 컬럼 제한 없이 재탐색한다
+    (표가 본문 컬럼 그리드에 딱 안 맞게 배치된 경우 대비,
+    section_boundary 체크가 이미 다른 섹션 내용 유입을 막고 있어 안전함).
 
     Returns:
         before: [(거리, 텍스트, page_no), ...] — 표 위쪽, 거리 오름차순
@@ -181,8 +181,8 @@ def _collect_by_bbox(
                     continue
                 (after_same_col if same_col else after_any_col).append((dist, text, table_page))
 
-        # 이전 페이지 하단 단락. TOPLEFT는 페이지 하단이 page_height라(페이지마다
-        # 다름) BOTTOMLEFT와 달리 그 페이지 자신의 높이 조회가 필요하다.
+        # 이전 페이지 하단 단락. TOPLEFT는 페이지 하단이 page_height라(페이지마다 다름) 
+        # BOTTOMLEFT와 달리 그 페이지 자신의 높이 조회가 필요하다.
         elif check_prev and item.page_no == table_page - 1:
             prev_page_height = parsed.page_sizes.get(table_page - 1, (0.0, 0.0))[1]
             if prev_page_height > 0 and cy >= prev_page_height - bbox_threshold:
@@ -227,11 +227,11 @@ def _embedding_filter(
     if not reference_text:
         return [(text, page) for _, text, page in candidates]
 
-    # sim_threshold <= 0 이면 어차피 모든 후보가 통과한다(표 주변 단락의 실측
-    # 코사인 유사도는 음수로 내려가지 않는다). 기본값이 0.0이라 이 분기가 거의
-    # 항상 타므로, 결과가 정해진 채로 문서당 가장 무거운 연산(임베딩 모델
-    # 로드 + 추론)을 돌리지 않고 건너뛴다. sentence-transformers import도 여기서
-    # 걸리지 않으므로 기본 설정이면 그 패키지 없이도 청킹이 동작한다.
+    # 코사인 유사도는 음수로 내려가지 않으므로 sim_threshold<=0이면 결과가
+    # 어차피 전부 통과다. 기본값이 0.0이라 이 분기가 거의 항상 타므로, 결과가
+    # 정해진 채로 임베딩 모델을 로드/추론하는 무거운 연산은 건너뛴다 — 이
+    # import 자체도 여기서 걸리지 않아 기본 설정이면 sentence-transformers
+    # 없이도 청킹이 동작한다.
     if sim_threshold <= 0:
         return [(text, page) for _, text, page in candidates]
 

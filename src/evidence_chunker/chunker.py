@@ -36,11 +36,13 @@ if TYPE_CHECKING:
 
 
 def _table_bottomleft_bbox(bbox, page_height: float) -> dict:
-    """TOPLEFT 정규화된 TableBlock.bbox를 raw BOTTOMLEFT dict로 되돌린다.
+    """
+    TOPLEFT로 정규화된 TableBlock.bbox를 원본 BOTTOMLEFT 딕셔너리로 복원.
 
-    EvidenceUnit.bbox는 BOTTOMLEFT 유지가 공개 계약(geometry.normalize_bbox
-    참고)이라 필요 — parser.docling._to_bbox와 같은 식이 자기 역함수라
-    그대로 다시 적용하면 원래 BOTTOMLEFT 값이 나온다.
+    EvidenceUnit.bbox는 공개 계약상 항상 BOTTOMLEFT를 유지해야 한다(자세한
+    이유는 geometry.normalize_bbox 참고). parser.docling._to_bbox가 쓰는
+    변환식(page_height - y)은 자기 역함수라, 같은 식을 한 번 더 적용하면
+    원본 BOTTOMLEFT 값으로 그대로 되돌아온다.
     """
     return {"l": bbox.l, "t": page_height - bbox.t, "r": bbox.r, "b": page_height - bbox.b}
 
@@ -147,7 +149,7 @@ def build_evidence_units(
         ]
 
         col_map = build_col_header_map(cells, num_cols)
-        # eu.section_header가 이미 채워져 있어야 함 — 순서를 바꾸면 안 됨.
+        # eu.section_header가 이미 채워져 있어야 함 (순서 변경 x)
         eu.table_abstract = build_table_abstract(caption_text, col_map, num_rows, eu.section_header)
 
         eu_list.append(eu)
@@ -174,8 +176,8 @@ class EvidenceChunker:
         artifacts_path: Docling 로컬 모델 경로. parser를 직접 넘기면 무시됨.
             None이면 HuggingFace Hub에서 자동 다운로드.
         bbox_threshold: 표 위아래 단락 수집 범위 (PDF 포인트). 기본 300pt.
-        sim_threshold: 코사인 유사도 임계값. 기본 0.0(사실상 무필터 — bbox
-            단일 게이트). 더 엄격한 필터링이 필요하면 호출자가 올릴 수 있음.
+        sim_threshold: 코사인 유사도 임계값. 기본 0.0(사실상 bbox 단일 게이트). 
+                       더 엄격한 필터링이 필요하면 호출자가 올릴 수 있음.
     """
 
     def __init__(
@@ -189,8 +191,8 @@ class EvidenceChunker:
         self.artifacts_path = artifacts_path
         self.bbox_threshold = bbox_threshold
         self.sim_threshold = sim_threshold
-        # Docling DocumentConverter는 첫 파싱 시점에 만든다(lazy). parser를
-        # 주입하면 아예 만들지 않으므로 Docling 초기화 비용도 들지 않는다.
+        # Docling DocumentConverter는 첫 파싱 시점에 만든다(lazy).
+        # parser를 주입하면 아예 만들지 않으므로 Docling 초기화 비용도 들지 않는다.
         self._converter = None
 
     # ------------------------------------------------------------------
@@ -230,26 +232,23 @@ class EvidenceChunker:
         """
         PDF를 표(EU) + 일반 본문을 합친 검색 코퍼스로 변환.
 
-        EU가 이미 흡수한 문단과 겹치는 일반 청크는 자동 제거되므로(중복
-        등장으로 인한 카니발라이제이션 방지 — 자세한 내용은
-        _build_text_chunks() 참고), 이 한 번 호출로 바로 벡터스토어에
-        넣을 수 있는 최종 코퍼스가 나온다.
+        EU가 이미 흡수한 문단과 겹치는 일반 청크는 자동 제거되므로
+        (중복 등장으로 인한 카니발라이제이션 방지: _build_text_chunks() 참고), 
+        이 한 번 호출로 바로 벡터스토어에 넣을 수 있는 최종 코퍼스가 나온다.
 
         Args:
             pdf_path: PDF 파일 경로
             doc_id:   chunk() 참고
 
         Returns:
-            List[RetrievalChunk] — EvidenceUnit(표)과 export.TextChunk(일반
-            본문)이 섞인 리스트. 둘 다 chunk_id/is_atomic/text/retrieval_text/
-            retrieval_units/metadata를 노출하므로 export.to_langchain() 등에
-            타입 구분 없이 그대로 넘기면 됨. is_atomic=True인 항목이 일반
-            본문 청크(EU 아님)를 뜻한다.
+            List[RetrievalChunk] — EvidenceUnit(표)과 export.TextChunk(일반 본문)이 섞인 리스트. 
+            둘 다 chunk_id/is_atomic/text/retrieval_text/retrieval_units/metadata를 노출하므로 
+            export.to_langchain() 등에 타입 구분 없이 그대로 넘기면 됨. 
+            is_atomic=True인 항목이 일반 본문 청크(EU 아님)를 뜻한다.
 
         Raises:
-            NotImplementedError: 생성자에 parser를 넘긴 경우. 표만 필요하면
-                chunk()를 쓸 것(그쪽은 parser 교체 가능) — 자세한 이유는
-                아래 예외 메시지 참고.
+            NotImplementedError: 생성자에 parser를 넘긴 경우. 
+            표만 필요하면 chunk()를 쓸 것(그쪽은 parser 교체 가능)
         """
         from .export import TextChunk
         from .parser.docling import DoclingParser
@@ -257,8 +256,8 @@ class EvidenceChunker:
         if self.parser is not None:
             raise NotImplementedError(
                 "build_corpus()는 커스텀 parser를 지원하지 않음 — 일반 본문 "
-                "청킹(HybridChunker)이 Docling DocumentConverter 산출물에 "
-                "직접 결합돼 있어서다. 표만 필요하면 chunk()를 쓸 것."
+                "청킹(HybridChunker)이 Docling DocumentConverter 산출물에 직접 결합되어 있기 때문"
+                "표만 필요하면 chunk()를 쓸 것."
             )
 
         pdf_path = str(pdf_path)
@@ -274,12 +273,10 @@ class EvidenceChunker:
 
     def _build_text_chunks(self, doc, eu_list: list[EvidenceUnit]) -> list:
         """
-        표와 무관한 일반 본문 청크 생성 (Docling HybridChunker), 원본 청크
-        그대로 반환 (export.TextChunk 래핑은 build_corpus()가 함).
+        표와 무관한 일반 본문 청크 생성 (Docling HybridChunker), 
+        원본 청크 그대로 반환 (export.TextChunk 래핑은 build_corpus()가 수행).
 
-        EU가 이미 흡수한 문단과 겹치는 청크는
-        export.filter_consumed_paragraphs()로 제거한다 — 카니발라이제이션
-        방지 이유는 그 함수 참고.
+        EU가 이미 흡수한 문단과 겹치는 청크는 export.filter_consumed_paragraphs()로 제거
         """
         from docling.chunking import HybridChunker
         from docling_core.types.doc import DocItemLabel
@@ -300,9 +297,9 @@ class EvidenceChunker:
         """parser가 주입됐으면 그대로 위임, 아니면 기본 Docling 플로우
         (artifacts_path 반영)로 파싱 후 ParsedDoc으로 변환.
 
-        chunk()가 parser를 완전히 교체 가능한 지점 — 표 추출 알고리즘
-        (caption/context/filters/flatten)이 ParsedDoc만 알고 Docling을
-        모르기 때문(tests/test_no_docling_dependency.py 참고).
+        chunk()가 parser를 완전히 교체 가능한 지점:
+        표 추출 알고리즘(caption/context/filters/flatten)이 ParsedDoc만 알고 
+        Docling을 모르기 때문(tests/test_no_docling_dependency.py 참고).
         """
         if self.parser is not None:
             return self.parser.parse(pdf_path)
@@ -321,10 +318,11 @@ class EvidenceChunker:
     def _make_converter(self):
         """DocumentConverter 생성. artifacts_path가 있으면 로컬 모델을 쓴다.
 
-        parser.docling.make_converter()와 역할이 겹치지만, 이쪽은 생성자
-        인자(artifacts_path)만 반영하는 최소 구성이다 — build_corpus()가
-        HybridChunker에 그대로 넘길 DoclingDocument를 직접 만들어야 해서
-        컨버터를 이 클래스가 소유한다. 표 구조 추출(do_table_structure)은
+        parser.docling.make_converter()와 역할이 겹치지만, 
+        이쪽은 생성자 인자(artifacts_path)만 반영하는 최소 구성
+        build_corpus()가 HybridChunker에 그대로 넘길 DoclingDocument를 
+        직접 만들어야 해서 컨버터를 이 클래스가 소유한다. 
+        표 구조 추출(do_table_structure)은
         Docling 기본값이 이미 True라 따로 지정하지 않는다.
         """
         from docling.document_converter import DocumentConverter, PdfFormatOption
