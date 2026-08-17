@@ -2,7 +2,7 @@
 
 > PDF의 표를 캡션·인접 설명 단락·각주까지 하나의 검색 단위로 묶어주는 RAG 청킹 라이브러리.
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 
 ---
@@ -172,4 +172,4 @@ eus = EvidenceChunker(parser=MyParser()).chunk("paper.pdf")   # Docling을 아�
 
 ## 라이선스
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE)
