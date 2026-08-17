@@ -189,7 +189,9 @@ class EvidenceChunker:
         self.artifacts_path = artifacts_path
         self.bbox_threshold = bbox_threshold
         self.sim_threshold = sim_threshold
-        self._converter = None  # 첫 chunk() 호출 시 초기화 (lazy, parser 미지정 시에만 씀)
+        # Docling DocumentConverter는 첫 파싱 시점에 만든다(lazy). parser를
+        # 주입하면 아예 만들지 않으므로 Docling 초기화 비용도 들지 않는다.
+        self._converter = None
 
     # ------------------------------------------------------------------
     # 퍼블릭 API
@@ -317,7 +319,14 @@ class EvidenceChunker:
         return result.document
 
     def _make_converter(self):
-        """DocumentConverter 생성. 로컬 모델 경로가 있으면 우선 사용."""
+        """DocumentConverter 생성. artifacts_path가 있으면 로컬 모델을 쓴다.
+
+        parser.docling.make_converter()와 역할이 겹치지만, 이쪽은 생성자
+        인자(artifacts_path)만 반영하는 최소 구성이다 — build_corpus()가
+        HybridChunker에 그대로 넘길 DoclingDocument를 직접 만들어야 해서
+        컨버터를 이 클래스가 소유한다. 표 구조 추출(do_table_structure)은
+        Docling 기본값이 이미 True라 따로 지정하지 않는다.
+        """
         from docling.document_converter import DocumentConverter, PdfFormatOption
         from docling.datamodel.pipeline_options import PdfPipelineOptions
 
