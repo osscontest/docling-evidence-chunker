@@ -1,12 +1,12 @@
 """
 measure_recall_single.py
 
-W4: 3모듈 통합 파이프라인(caption_mapper + context_attacher + table_splitter)의
-Recall@1을 baseline.py(Docling HybridChunker 단독, 0.60)와 비교 측정.
+EU 통합 파이프라인(caption + context + split)의 Recall@1을 Docling
+HybridChunker 단독 기준선(baseline.py, 0.60)과 같은 문서/질문으로 비교 측정.
 
 파이프라인:
     PDF --DocumentConverter()--> doc (baseline과 동일 컨버터/옵션)
-      +-- doc.tables --> build_evidence_units() --> [table_splitter.split_eu()] --> EU 청크
+      +-- doc.tables --> build_evidence_units() --> [split_oversized_units()] --> EU 청크
       +-- HybridChunker(doc) --> 청크 중 표 관련(doc_item.label == "table") 청크는 EU로 대체되므로 제외
     두 그룹을 합쳐 최종 검색 코퍼스 구성 후 baseline과 동일 질문으로 Recall@1 측정.
 
@@ -14,10 +14,10 @@ Recall@1을 baseline.py(Docling HybridChunker 단독, 0.60)와 비교 측정.
     chunk.meta.doc_items 중 하나라도 label == DocItemLabel.TABLE 이면 "표 청크"로 간주하고 제외.
     (Docling은 표 캡션도 표 데이터와 함께 label=table로 직렬화하므로 캡션 중복도 함께 제거됨)
 
-W4 중간측정 회귀(0.60 -> 0.40) 원인 3건 및 조치:
-    1. context_attacher가 같은 페이지 내에서만 컨텍스트를 탐색 -> 인접 페이지 경계
-       탐색 추가로 해결 (context_attacher._collect_by_bbox의 ADJACENT_PAGE_EDGE_RATIO).
-    2. Docling이 표 1개를 TableItem 2개로 중복 감지 -> _table_utils.find_duplicate_tables()
+중간 측정에서 0.60 -> 0.40으로 떨어졌던 원인 3건 및 조치:
+    1. context.py가 같은 페이지 내에서만 컨텍스트를 탐색 -> 인접 페이지 경계
+       탐색 추가로 해결 (context._collect_by_bbox의 ADJACENT_PAGE_EDGE_RATIO).
+    2. Docling이 표 1개를 TableItem 2개로 중복 감지 -> filters.find_duplicate_tables()
        로 셀 텍스트 중복도를 비교해 더 세밀하게 구조화된 쪽만 남기고 캡션을 물려줌.
     3. 캡션+표+컨텍스트를 합친 긴 EU 청크가 짧은 서술형 문단 청크보다 임베딩 유사도에서
        밀림 -> 원인은 all-MiniLM-L6-v2가 입력을 256 토큰에서 truncate하는데, eu.text는
@@ -26,12 +26,12 @@ W4 중간측정 회귀(0.60 -> 0.40) 원인 3건 및 조치:
        EvidenceUnit.retrieval_text(table_html 제외, 신호 밀도 높은 순 배치)로 임베딩하고
        eu.text(전체 내용)는 표시/생성용으로만 사용하도록 분리해 해결.
 
-0.60 -> 0.80 회귀 후속 조치:
-    - context_attacher._same_column의 20pt 허용오차가 표-문단 간 x축 간격이
+0.60 -> 0.80 후속 조치:
+    - context._same_column의 20pt 허용오차가 표-문단 간 x축 간격이
       그보다 살짝 큰(실사례 28pt) 경우를 걸러내던 문제 -> 같은 컬럼에서 못 찾으면
       컬럼 제한 없이 재탐색하는 폴백 추가.
     - attach_context_paragraphs가 eu_id로 표를 재추정하던 방식이 find_duplicate_tables
-      dedup 이후 doc.tables 스캔 순서와 어긋나 엉뚱한(제거된 중복) 표 기준으로 컨텍스트를
+      dedup 이후 tables 스캔 순서와 어긋나 엉뚱한(제거된 중복) 표 기준으로 컨텍스트를
       찾던 버그 -> 호출자가 이미 알고 있는 table_bbox를 직접 넘기도록 수정.
 
 남은 miss 대응 시도 — 2단계 재순위화(bi-encoder 후보 -> cross-encoder 재채점):
@@ -52,7 +52,7 @@ W4 중간측정 회귀(0.60 -> 0.40) 원인 3건 및 조치:
 
 Usage:
     python benchmarks/measure_recall_single.py                      # split 적용, rerank 미적용, all-MiniLM (기본)
-    python benchmarks/measure_recall_single.py --no-split            # table_splitter 끄고 측정 (ablation)
+    python benchmarks/measure_recall_single.py --no-split            # 행 단위 분할 끄고 측정 (ablation)
     python benchmarks/measure_recall_single.py --rerank              # cross-encoder 재순위화 켜고 측정 (이 벤치마크에선 손해로 측정됨)
     python benchmarks/measure_recall_single.py --embed-model=bge     # BAAI/bge-small-en-v1.5로 측정
     python benchmarks/measure_recall_single.py --embed-model=e5      # intfloat/e5-small-v2로 측정
@@ -116,8 +116,8 @@ def main():
 
     # ------------------------------------------------------------------
     # 1. 파싱 (baseline과 동일한 기본 DocumentConverter — 로컬 모델 경로를 쓰는
-    #    make_converter()는 이 PDF의 7페이지에서 std::bad_alloc으로 Table 2를
-    #    통째로 날려버려서 사용하지 않음. README "큰 PDF 메모리 이슈" 참고)
+    #    make_converter(use_local_models=True)는 이 PDF의 7페이지에서
+    #    std::bad_alloc으로 Table 2를 통째로 날려버려서 사용하지 않음)
     # ------------------------------------------------------------------
     section("PDF 파싱")
     converter = DocumentConverter()
@@ -126,19 +126,19 @@ def main():
     print(f"  파싱 완료. 표 {len(doc.tables)}개 감지")
 
     # ------------------------------------------------------------------
-    # 2. EvidenceUnit 빌드 (+ 옵션에 따라 table_splitter 적용)
+    # 2. EvidenceUnit 빌드 (+ 옵션에 따라 행 단위 분할 적용)
     # ------------------------------------------------------------------
     section("EvidenceUnit 빌드")
     parsed = DoclingParser().from_doc(doc)
-    eu_list = build_evidence_units(parsed)
+    eu_list = build_evidence_units(parsed, doc_id="docling_technical_report")
     print(f"  원본 표 EU: {len(eu_list)}개")
 
     if APPLY_SPLIT:
         eu_list = split_oversized_units(eu_list)
         n_split = sum(1 for eu in eu_list if eu.is_split)
-        print(f"  분할(table_splitter) 적용 후: {len(eu_list)}개 ({n_split}개는 분할 조각)")
+        print(f"  행 단위 분할 적용 후: {len(eu_list)}개 ({n_split}개는 분할 조각)")
     else:
-        print(f"  분할(table_splitter) 미적용 (--no-split)")
+        print(f"  행 단위 분할 미적용 (--no-split)")
 
     for eu in eu_list:
         print(f"    [{eu.eu_id}] p{eu.page_no} caption={ (eu.caption_text or '')[:50]!r}")
@@ -165,7 +165,7 @@ def main():
     #
     #    EU 하나를 통짜로 한 벡터에 임베딩하면(retrieval_text) "표 안의 특정
     #    셀 값"을 묻는 질의가 같은 표의 나머지 행 데이터에 묻혀 유사도에서
-    #    밀리는 문제가 있었다 (원인 #3 잔여 이슈). flattened_rows 문장을
+    #    밀리는 문제가 있었다 (위 3번 원인의 잔여 이슈). flattened_rows 문장을
     #    각각 별도 벡터로 인덱싱하고, 어느 문장이 매칭되든 그 문장이 속한
     #    EU 전체(eu.text)를 반환하는 small-to-big 패턴으로 바꾼다.
     # ------------------------------------------------------------------
@@ -193,7 +193,7 @@ def main():
           f"(EU {len(eu_list)}개 -> 행 단위 {n_eu_units}개 + 비-표 HybridChunker {len(non_table_chunks)}개)")
 
     # ------------------------------------------------------------------
-    # 5. 임베딩 + Recall@1 (baseline_recall_local.py와 동일 질문/모델)
+    # 5. 임베딩 + Recall@1 (baseline.py와 동일 질문/모델)
     #    검색은 행 단위 유닛으로, 검색된 청크 표시/실사용 콘텐츠는
     #    corpus_display(부모 EU의 eu.text, 전체) 사용.
     # ------------------------------------------------------------------

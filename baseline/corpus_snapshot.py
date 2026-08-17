@@ -12,9 +12,8 @@ to_langchain()(EU/일반 청크 전체 1개=문서 1개)과 to_langchain_units()
 구조가 서로 다르므로(하나는 retrieval_text, 하나는 parent_text) 둘 다
 diff 기준으로 남겨야 리팩터링 후 정확히 같은지 확인할 수 있다.
 
-Stage 3 (3)의 chunk()/build_corpus() 분리 이후 API로 갱신됨(예전엔
-chunker.chunk(output=...)였음 — 그 스냅샷은 baseline/corpus_snapshot_
-langchain*.json로 남아 있고, 이 스크립트로 재생성해서 diff 뜨면 됨).
+커밋된 baseline/corpus_snapshot_langchain*.json이 비교 기준이며, 이
+스크립트로 다시 생성해 diff를 뜨는 방식으로 쓴다.
 """
 import os
 import json

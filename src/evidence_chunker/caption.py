@@ -3,13 +3,19 @@ caption.py
 
 캡션 ↔ 표 매핑 알고리즘.
 
-parser.base.TableBlock.caption_refs를 사용해 표와 캡션 텍스트를 1:1로
-연결한다. 우선순위(direct → bbox → 인접 페이지 → 병합 헤더 → none)는
-map_table_caption() 참고.
+parser.base.TableBlock.caption_refs를 사용해 표와 캡션 텍스트를 1:1로 연결한다. 
+관련 로직은 map_table_caption() 참고.
 
-parser.base.ParsedDoc/TableBlock 기반 — Docling DoclingDocument를 직접
-만지지 않는다. 좌표 비교는 TOPLEFT(parser/base.py 참고) 기준 — "표 위" =
-cy가 작을수록 위쪽.
+매핑 우선순위
+1. direct (Docling 파서가 직접 연결한 경우)
+2. bbox (표 상단 300pt 이내 텍스트 탐색)
+3. 인접 페이지 (표가 페이지 최상단일 경우 이전 페이지 하단 탐색)
+4. 병합 헤더 (표 내부 첫 행이 캡션 역할을 하는 경우)
+5. none
+
+아키텍처 규칙
+- parser.base.ParsedDoc / TableBlock 기반으로 동작하며, DoclingDocument를 직접 조작하지 않는다.
+- 좌표 비교는 TOPLEFT 기준 (cy가 작을수록 위쪽을 의미).
 """
 from __future__ import annotations
 
@@ -20,21 +26,24 @@ from typing import TYPE_CHECKING, Literal, Optional
 if TYPE_CHECKING:
     from .parser.base import BBox, ParsedDoc, TableBlock
 
-# 캡션 fallback 탐색 범위(표 위/아래, pt) — 일반 컨텍스트(300pt)보다 좁게,
-# 캡션은 보통 표 바로 옆에 있음.
+# 일반 컨텍스트 탐색(300pt)보다 좁힌다 — 캡션은 표에 바짝 붙어 있으므로
+# 반경을 좁혀 무관한 텍스트 유입을 막는다.
 CAPTION_SEARCH_PT = 200.0
 
-# section_header도 후보에 포함 — 캡션이 section_header로 잘못 라벨링되는
-# 경우가 있음.
+# 파서가 캡션을 section_header로 잘못 라벨링하는 경우가 흔해 후보에 포함한다.
 _CANDIDATE_LABEL_NAMES = {"caption", "section_header", "text"}
 
-# "Table 1", "표1", "<표 3>" 등 번호 붙은 캡션 패턴. 부록 번호 체계
-# ("Table C.1")도 인식하도록 숫자 앞 문자 하나를 허용한다.
+# "Table 1", "표1", "<표 3>" 등 일반적인 캡션 패턴. [A-Z]?는 "Table C.1" 같은
+# 부록 번호 체계까지 잡기 위함.
 _CAPTION_PATTERN = re.compile(r"(table|figure|fig|표|그림)\s*\.?\s*[A-Z]?\.?\s*\d+", re.IGNORECASE)
 _MIN_CAPTION_LEN = 8
 
-# 표가 페이지 위/아래 이 비율 이내에 걸쳐 있을 때만 인접 페이지를 탐색한다
-# — 게이팅 없이 인접 페이지를 보면 무관한 옆 페이지 캡션을 잘못 채택할 수 있음.
+# 텍스트 맨 앞 20자 이내에서만 매칭 — 전체를 검색하면 본문 중간의 참조
+# 문구("...as shown in Figure 2.2...")를 캡션으로 오인한다.
+CAPTION_PREFIX_CHARS = 20
+
+# 표가 페이지 상/하단 15% 이내일 때만 인접 페이지를 탐색 — 게이팅 없이
+# 뒤지면 멀리 떨어진 무관한 캡션을 잘못 채택할 위험이 크다.
 _ADJACENT_PAGE_EDGE_RATIO = 0.15
 
 
@@ -50,18 +59,17 @@ class CaptionMapping:
 
 
 def _center_y(bbox: "BBox") -> float:
+    """bbox의 수직 중심. TOPLEFT라 값이 작을수록 페이지 위쪽이다."""
     return (bbox.t + bbox.b) / 2.0
 
 
-# 캡션 패턴은 텍스트 맨 앞부분에서만 확인 (아래 CAPTION_PREFIX_CHARS 참고).
-CAPTION_PREFIX_CHARS = 20
-
-
 def _looks_like_caption(text: Optional[str]) -> bool:
-    """"Table 1", "<표 3>" 같은 번호 붙은 캡션 패턴인지 확인.
+    """
+    번호가 부여된 캡션 패턴("Table 1", "<표 3>" 등) 포함 여부.
 
-    텍스트 앞부분(CAPTION_PREFIX_CHARS자)에서만 찾는다 — 전체 텍스트에서
-    찾으면 본문 중간의 우연한 참조("...Figure 2.2...")도 캡션으로 오탐한다.
+    표뿐 아니라 그림 캡션까지 넓게 인정한다 — 완전히 버리는 대신 fallback에서
+    confidence를 "inferred"로 낮춰 정보 손실 없이 활용한다. 앞부분
+    CAPTION_PREFIX_CHARS 글자만 검사하는 이유는 그 상수 주석 참고.
     """
     if not text or len(text.strip()) < _MIN_CAPTION_LEN:
         return False
@@ -69,12 +77,10 @@ def _looks_like_caption(text: Optional[str]) -> bool:
     return bool(_CAPTION_PATTERN.search(prefix))
 
 
-# direct 참조 검증 전용 — table.captions가 그림(Figure) 캡션을 가리키는
-# 경우 "direct"로 잘못 신뢰하지 않기 위해 table/표 패턴만 인정한다
-# (그림 캡션을 direct로 확정하면 EvidenceUnit.safe_caption이 걸러내지
-# 못하고 EU 전체에 증폭됨). bbox/인접 페이지 fallback은 여전히 넓은
-# 패턴(fig/figure/그림 포함)을 써서 confidence만 "inferred"로 낮추고
-# 텍스트 자체는 잃지 않는다.
+# direct 검증은 table/표 패턴만 인정한다 — table.captions가 그림 캡션을
+# 가리키는 경우까지 direct로 신뢰하면 safe_caption이 못 걸러내고 EU 전체에
+# 노이즈가 퍼진다. bbox/인접 페이지 fallback은 넓은 패턴을 허용하되
+# confidence를 inferred로 낮춰서 구분한다.
 _TABLE_CAPTION_PATTERN = re.compile(r"(table|표)\s*\.?\s*[A-Z]?\.?\s*\d+", re.IGNORECASE)
 
 
@@ -136,9 +142,8 @@ def _find_caption_adjacent_page(
     """
     같은 페이지 bbox fallback도 실패했을 때, 표 바로 앞/뒤 페이지에서 캡션 재탐색.
 
-    페이지가 다르면 좌표계(페이지별 y 원점)가 서로 달라 bbox 거리 비교가
-    무의미하므로, "이전 페이지에서 가장 아래" / "다음 페이지에서 가장 위"에
-    있는 캡션 패턴 텍스트를 채택한다.
+    페이지가 다르면 좌표계(페이지별 y 원점)가 서로 달라 bbox 거리 비교가 무의미하므로, 
+    "이전 페이지에서 가장 아래" / "다음 페이지에서 가장 위"에 있는 캡션 패턴 텍스트를 채택한다.
 
     Returns:
         (caption_text, found) — 못 찾거나 게이팅에 걸리면 (None, False)
@@ -182,14 +187,14 @@ def _find_caption_adjacent_page(
     return None, False
 
 
-# fallback 4: Docling이 캡션을 별도 텍스트 아이템이 아니라 표 자체의 첫 행
-# (병합된 th/td 하나)으로 렌더링하는 경우가 있다 — 위 세 fallback은
-# parsed.texts만 보므로 이 경우를 원천적으로 못 본다.
+# fallback 4: Docling이 캡션을 별도 텍스트 아이템이 아니라 표 첫 행(병합된
+# th/td)으로 렌더링하는 경우 — 위 fallback들은 parsed.texts만 순회하므로
+# 이 케이스를 발견하지 못한다.
 #
-# table.html/cells는 손대지 않는다 — 둘 다 같은 Docling 표에서 독립적으로
-# 계산되므로, 한쪽(html)만 캡션 행을 지우면 cells는 그대로 남아 flatten.py/
-# split.py의 행 인덱스가 어긋난다. 대가는 EU.text에 캡션이 표 안에도 한 번
-# 더 남는 경미한 토큰 중복뿐 — 정확성 문제는 없다.
+# table.html/cells는 여기서 건드리지 않는다. 두 데이터는 같은 표에서 독립
+# 계산되므로 한쪽(html)에서만 캡션 행을 지우면 flatten.py/split.py에서 행
+# 인덱스가 어긋난다. 대신 EU.text에 캡션이 한 번 더 남는 경미한 토큰 중복을
+# 감수한다.
 
 _MERGED_HEADER_PATTERN = re.compile(
     r'<t[hd][^>]*colspan="(\d+)"[^>]*>\s*(.*?)\s*</t[hd]>',

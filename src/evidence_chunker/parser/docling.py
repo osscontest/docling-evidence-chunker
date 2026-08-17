@@ -25,9 +25,9 @@ def make_converter(do_ocr: bool | None = None, use_local_models: bool = False):
     artifacts_path = None
     if use_local_models:
         # combined/ = layout(model.safetensors) + table(model_artifacts/) 병합본.
-        # 로컬 아티팩트 경로가 일부 PDF 7페이지에서 std::bad_alloc으로 표를
-        # 통째로 날린다(benchmarks/measure_recall_single.py 주석) — 그래서
-        # 기본은 꺼져 있고 필요할 때만 opt-in.
+        # 로컬 아티팩트를 쓰면 일부 PDF에서 표 구조 추출 중 std::bad_alloc이
+        # 나면서 해당 페이지의 표가 통째로 사라지는 경우가 있다 — 그래서
+        # 기본은 꺼두고 필요할 때만 opt-in 한다.
         candidate = MODELS_DIR / "combined"
         artifacts_path = candidate if candidate.exists() else None
 
@@ -78,12 +78,11 @@ class DoclingParser:
     """
     ParsedDoc을 만드는 기본 파서.
 
-    make_converter(use_local_models=True) 는 쓰지 않는다 — 로컬 모델 경로가
-    일부 PDF 7페이지에서 std::bad_alloc 으로 표를 통째로 날린다
-    (measure_recall_single.py 주석 참고). 로컬 모델만 빼면 make_converter()
-    와 동일한 설정이며, do_ocr 도 같은 값을 쓴다.
+    make_converter()를 use_local_models 없이(기본값 False) 호출한다 — 로컬
+    아티팩트를 쓰면 일부 PDF에서 표가 통째로 사라지기 때문(그 옵션 주석 참고).
+    그 한 가지만 빼면 make_converter()와 동일한 설정이다.
 
-    do_ocr 는 기본이 None = Docling 기본값 위임. 라이브러리가 대신 정하지
+    do_ocr는 기본이 None = Docling 기본값 위임. 라이브러리가 대신 정하지
     않는다(make_converter 참고).
     """
 

@@ -3,9 +3,9 @@ measure_recall_multi.py
 
 여러 PDF x 여러 유형의 질문으로 Recall@1을 측정하는 확장판.
 
-measure_recall_eu.py(문서 1개, 질문 5개)는 표본이 너무 작아서 질문 하나
-뒤집힐 때마다 20%p씩 흔들리는 문제가 있다. 문서 3개(영어 논문 2 + 기술
-보고서 1) x 질문 24개로 확장해서 좀 더 안정적인 수치를 본다.
+measure_recall_single.py(문서 1개, 질문 5개)는 표본이 너무 작아서 질문 하나
+뒤집힐 때마다 20%p씩 흔들린다. 문서 3개(영어 논문 2 + 기술 보고서 1) x
+질문 24개로 확장해서 좀 더 안정적인 수치를 본다.
 
 모든 질문의 정답은 실제로 해당 PDF를 파싱해서 확인한 표 내용(캡션/셀 값/
 컨텍스트 문단)을 기준으로 만들었다 — 지어낸 질문 아님.
@@ -13,7 +13,7 @@ measure_recall_eu.py(문서 1개, 질문 5개)는 표본이 너무 작아서 질
 질문 유형(type) 태그별로 파이프라인의 어느 기능을 검증하는지:
     cell_value    : 표 안 특정 셀 값을 묻는 질문 -> flattened_rows / 행 단위 다중 벡터
     table_about   : "이 표가 뭐에 대한 표냐"는 광범위 질문 -> caption / table_abstract
-    context_only  : 표 위아래 설명 문단에만 답이 있는 질문 -> context_attacher
+    context_only  : 표 위아래 설명 문단에만 답이 있는 질문 -> context.py(문맥 흡수)
 
 Usage:
     python benchmarks/measure_recall_multi.py
@@ -98,7 +98,7 @@ def section(title: str) -> None:
 
 
 def build_corpus(doc, eu_list):
-    """measure_recall_eu.py와 동일한 행 단위 다중 벡터 코퍼스 구성."""
+    """measure_recall_single.py와 동일한 행 단위 다중 벡터 코퍼스 구성."""
     from docling.chunking import HybridChunker
     from docling_core.types.doc import DocItemLabel
 

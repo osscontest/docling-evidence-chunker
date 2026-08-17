@@ -1,8 +1,9 @@
 """
 baseline/snapshot.py
 
-Stage 0 회귀 기준선: EU 산출물 자체를 스냅샷으로 저장.
-recall 수치보다 이쪽이 회귀를 더 정확히 잡는다.
+회귀 기준선: EU 산출물 자체를 JSON 스냅샷으로 저장해두고 리팩터링 전후로
+diff를 뜬다. recall 수치는 임계값 근처에서 흔들리므로, 산출물 비교가 회귀를
+더 정확히 잡는다.
 """
 import os
 import json

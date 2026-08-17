@@ -75,9 +75,6 @@ def to_langchain_units(chunks: list["RetrievalChunk"]) -> list["LangChainDocumen
 # 같은 EU의 유닛 여러 개가 top-k 슬롯을 몰아 차지해서 실제로 검색되는
 # "서로 다른 근거"의 개수가 줄어든다. 같은 chunk_id(부모 EU/청크)끼리
 # 최고 점수만 남기고 재랭킹하면(max-pool) 이 손해를 없앨 수 있다.
-#
-# top-1(EM/Recall@1)은 dedupe 전후로 항상 동일하다 — 전역 1등 유닛은
-# 자기 그룹 안에서도 항상 최고 점수이므로.
 
 def dedupe_by_chunk_id(
     results: list,
