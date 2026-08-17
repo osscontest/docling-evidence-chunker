@@ -52,8 +52,10 @@ class EvidenceUnit:
     table_html: Optional[str] = None
     footnote_text: Optional[str] = None
 
-    context_before: list[str] = field(default_factory=list)  # bbox 거리 + 임베딩 유사도로 필터링된 표 위쪽 단락
-    context_after: list[str] = field(default_factory=list)   # 표 아래쪽 단락(위와 동일 기준)
+    # bbox 거리로 수집(기본, sim_threshold=0.0). sim_threshold>0으로 올리면
+    # 코사인 유사도 필터도 함께 적용된 표 위/아래쪽 단락.
+    context_before: list[str] = field(default_factory=list)
+    context_after: list[str] = field(default_factory=list)   # 아래쪽(위와 동일 기준)
 
     # 셀을 "행헤더 | 열헤더: 값" 자연어 문장으로 변환 (flatten.flatten_to_sentences()).
     flattened_rows: list[str] = field(default_factory=list)
