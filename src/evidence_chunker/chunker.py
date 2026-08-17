@@ -256,7 +256,7 @@ class EvidenceChunker:
         if self.parser is not None:
             raise NotImplementedError(
                 "build_corpus()는 커스텀 parser를 지원하지 않음 — 일반 본문 "
-                "청킹(HybridChunker)이 Docling DocumentConverter 산출물에 직접 결합되어 있기 때문"
+                "청킹(HybridChunker)이 Docling DocumentConverter 산출물에 직접 결합되어 있기 때문. "
                 "표만 필요하면 chunk()를 쓸 것."
             )
 
