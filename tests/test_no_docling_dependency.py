@@ -1,13 +1,12 @@
 """
-Stage 4 파서 추상화의 최종 증거: 알고리즘 4개 모듈(caption/context/filters/
-flatten)이 Docling 없이도 import된다는 것을 sys.meta_path 훅으로 실제로
-docling import를 막고 확인한다. docling과 docling_core(DoclingDocument
-타입을 정의하는 별도 패키지) 둘 다 막는다 — 하나만 막으면 누가
-docling_core.types를 알고리즘 모듈에 직접 쓰는 결합을 추가해도 이 테스트가
-못 잡는다.
+알고리즘 4개 모듈(caption/context/filters/flatten)이 Docling 없이도
+import된다는 것을 sys.meta_path 훅으로 docling import를 실제로 막고
+확인한다. docling과 docling_core(DoclingDocument 타입을 정의하는 별도
+패키지) 둘 다 막는다 — 하나만 막으면 누가 docling_core.types를 알고리즘
+모듈에 직접 쓰는 결합을 추가해도 이 테스트가 못 잡는다.
 
-"그냥 Docling 래퍼 아니냐"는 질문에 대한 실행 가능한 반박 — 알고리즘이
-파서 없이 독립적으로 존재한다는 걸 이 테스트가 통과하는 것 자체가 증명한다.
+표 추출 알고리즘이 특정 파서에 묶여 있지 않다는 것(= 파서를 갈아끼울 수
+있다는 것)을 이 테스트의 통과 자체가 보증한다.
 evidence_chunker.chunker/parser.docling은 여기 포함되지 않는다 — 그쪽은
 DocumentConverter/HybridChunker를 실제로 쓰는 오케스트레이션 레이어라
 Docling이 당연히 필요하다.

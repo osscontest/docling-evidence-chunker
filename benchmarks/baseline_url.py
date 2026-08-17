@@ -1,4 +1,9 @@
-# baseline_url.py
+"""
+baseline_url.py
+
+비교 기준선(Docling HybridChunker 단독)을 arXiv URL에서 PDF를 바로 받아 측정.
+로컬 PDF로 같은 측정을 하려면 baseline.py를 쓸 것.
+"""
 from docling.document_converter import DocumentConverter
 from docling.chunking import HybridChunker
 from sentence_transformers import SentenceTransformer

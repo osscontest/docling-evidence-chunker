@@ -1,23 +1,24 @@
 """
 unit.py
 
-모듈 간 인터페이스 정의.
+검색 단위 EvidenceUnit 데이터클래스 정의.
 
-역할:
-    표          → EU로 변환
-    텍스트/그림 → Docling HybridChunker
+표 하나에서 뽑은 캡션 / 표 데이터 / 인접 설명 단락 / 각주를 한 덩어리로
+들고, 용도별로 세 가지 텍스트 뷰를 property로 제공한다.
+
+    text            : LLM 컨텍스트용 전체 텍스트 (table_html 포함)
+    retrieval_text  : 임베딩 검색용 (table_html 제외 — 토큰 예산 절약)
+    retrieval_units : 행 단위 다중 벡터(small-to-big)용 검색 단위 목록
+
+표가 아닌 일반 본문 청크는 export.TextChunk가 담당한다. 두 타입 모두
+export.RetrievalChunk 프로토콜을 만족하므로 export의 to_*() 함수들이
+구분 없이 다룰 수 있다.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Literal, Optional
-
-# LangChain 미설치 환경에서도 import 가능
-try:
-    from langchain_core.documents import Document as LangChainDocument
-except ImportError:
-    LangChainDocument = None  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -51,8 +52,10 @@ class EvidenceUnit:
     table_html: Optional[str] = None
     footnote_text: Optional[str] = None
 
-    context_before: list[str] = field(default_factory=list)  # bbox 거리 + 임베딩 유사도로 필터링된 표 위쪽 단락
-    context_after: list[str] = field(default_factory=list)   # 표 아래쪽 단락(위와 동일 기준)
+    # bbox 거리로 수집(기본, sim_threshold=0.0). sim_threshold>0으로 올리면
+    # 코사인 유사도 필터도 함께 적용된 표 위/아래쪽 단락.
+    context_before: list[str] = field(default_factory=list)
+    context_after: list[str] = field(default_factory=list)   # 아래쪽(위와 동일 기준)
 
     # 셀을 "행헤더 | 열헤더: 값" 자연어 문장으로 변환 (flatten.flatten_to_sentences()).
     flattened_rows: list[str] = field(default_factory=list)

@@ -102,7 +102,7 @@ jobs:
           mkdir -p signatures
           mv dist/*.sigstore.json signatures/
 
-      # v0.1 연습 배포: TestPyPI. 실제 pypi.org로 옮길 땐 repository-url 줄만 지우면 됨.
+      # 현재 배포 대상은 TestPyPI. pypi.org로 전환할 땐 repository-url 줄만 지우면 된다.
       - name: TestPyPI에 배포 (Trusted Publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

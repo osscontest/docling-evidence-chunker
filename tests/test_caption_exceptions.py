@@ -2,15 +2,14 @@
 캡션 예외처리 검증 — 캡션 없는 표 / 복수 캡션 / 다음(이전) 페이지 캡션.
 
 배경:
-    07_caption_table_mapping_poc.py로 검증한 실제 테스트 PDF(영어 논문 2 +
+    benchmarks/report_caption_mapping.py로 훑어본 실제 테스트 PDF(영어 논문 2 +
     한국어 보고서 + GPT-3, 표 23개) 어디에서도 multi_caption / cross_page 케이스가
-    실제로 발동한 적이 없었음. 실 데이터로 재현이 안 되므로 합성(mock) 문서를
-    만들어 caption.map_table_caption()의 예외 처리 분기를 직접 검증한다.
+    발동한 적이 없다. 실 데이터로 재현이 안 되므로 합성 문서를 만들어
+    caption.map_table_caption()의 예외 처리 분기를 직접 검증한다.
 
-Stage 4 파서 추상화: 예전에는 model_dump() 인터페이스를 흉내낸 Fake*
-클래스(FakeItem/FakeTable/FakeDoc)를 썼는데, caption.py가 이제
-parser.base.ParsedDoc/TextBlock/TableBlock을 직접 받으므로 정식 모델을
-그대로 쓴다 — Fake 클래스는 필요 없어짐.
+caption.py가 parser.base.ParsedDoc/TextBlock/TableBlock을 직접 받으므로
+합성 문서도 그 정식 모델로 조립한다 — DoclingDocument의 model_dump()
+인터페이스를 모방하는 가짜 클래스가 필요 없다.
 
 좌표는 전부 TOPLEFT(파서 경계에서 정규화된 값. parser/base.py 참고):
 y가 작을수록 페이지 위쪽, 클수록 아래쪽. 원본 BOTTOMLEFT 테스트의 숫자를

@@ -1,11 +1,14 @@
 """
 geometry.py
 
-bbox 좌표 변환 유틸리티.
+EvidenceUnit.bbox 좌표 변환.
 
-unit.py는 EvidenceUnit 데이터클래스 정의만 담당하고, 좌표 변환 로직은
-여기로 분리 (export/ 패키지가 LangChain/LlamaIndex 변환 로직을 분리한 것과
-동일한 패턴).
+이 패키지의 좌표계는 두 종류다. 파서 경계를 지난 내부 좌표
+(parser.base.BBox)는 계산 편의를 위해 TOPLEFT로 정규화돼 있지만,
+EvidenceUnit.bbox는 0~1로 스케일한 BOTTOMLEFT를 공개 계약으로 유지한다.
+
+여기가 그 마지막 변환을 담당하는 유일한 지점 — 변환 규칙은
+normalize_bbox() 참고.
 """
 
 from __future__ import annotations
