@@ -1,17 +1,16 @@
 """
-STEP 7 (W2 PoC): 캡션 ↔ 표 매핑 알고리즘 검증.
+report_caption_mapping.py
 
-담당: 팀원 1 (캡션↔표 연결, EU 핵심 anchor 로직)
+실제 PDF에서 캡션 ↔ 표 매핑(caption.py)이 어떻게 붙는지 리포트.
 
-목적:
-  - Docling TableItem.captions RefItem 파싱 -> 캡션 텍스트 역참조
-  - 표-캡션 1:1 매핑 알고리즘 프로토타입 (_caption_mapper.py)
-  - 매핑률, 복수 캡션, cross-page, 충돌(collision) 케이스 검증/리포트
+확인 항목:
+  - 매핑률과 confidence 분포(direct / inferred / none)
+  - 복수 캡션(multi_caption), 다른 페이지 캡션(cross_page)
+  - 같은 캡션을 두 표가 물고 있는 충돌(collision)
 
-W3 예외처리 (_caption_mapper.py에서 실제 처리, scripts/08에서 합성 데이터로 검증):
-  - 캡션 없는 표 fallback (bbox 거리 매칭)
-  - 다음/이전 페이지 캡션 케이스 실제 연결 (cross_page=True)
-  - 복수 캡션 병합 처리 (multi_caption=True)
+caption.py의 fallback 경로(캡션 없는 표의 bbox 거리 매칭, 인접 페이지 탐색,
+복수 캡션 병합)는 실제 PDF에서 잘 발동하지 않는 분기까지 포함하므로,
+합성 데이터로 하는 검증은 tests/test_caption_exceptions.py가 담당한다.
 
 Usage:
     python benchmarks/report_caption_mapping.py [path/to/file.pdf]
@@ -40,13 +39,17 @@ def section(title: str) -> None:
 
 def run_on_pdf(converter, pdf_path: str) -> dict:
     from evidence_chunker.caption import map_all_captions, validate_mapping
+    from evidence_chunker.parser.docling import DoclingParser
 
     pdf_name = os.path.splitext(os.path.basename(pdf_path))[0]
-    print(f"\n[7] Parsing: {pdf_path}")
+    print(f"\n[PARSE] {pdf_path}")
     result = converter.convert(pdf_path)
     doc = result.document
 
-    mappings = map_all_captions(doc)
+    # caption.py는 DoclingDocument가 아니라 ParsedDoc만 받는다 — 파서 경계를
+    # 거쳐야 하며, 좌표계도 여기서 TOPLEFT로 정규화된다.
+    parsed = DoclingParser().from_doc(doc)
+    mappings = map_all_captions(parsed)
     stats = validate_mapping(mappings)
 
     section(f"{pdf_name} — 표 {stats['total_tables']}개 매핑 결과")
@@ -108,7 +111,7 @@ def main():
 
     converter = make_converter()
 
-    section("캡션 ↔ 표 매핑 PoC (W2, 팀원 1)")
+    section("캡션 ↔ 표 매핑 리포트")
     all_stats = [run_on_pdf(converter, p) for p in pdf_paths]
 
     if len(all_stats) > 1:
@@ -120,7 +123,7 @@ def main():
         else:
             print("  표 없음")
 
-    print("\n[DONE] 07_caption_table_mapping_poc.py complete")
+    print("\n[DONE] 캡션 매핑 리포트 완료")
 
 
 if __name__ == "__main__":

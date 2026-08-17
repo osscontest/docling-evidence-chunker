@@ -1,21 +1,22 @@
 """
 parser/base.py
 
-Docling과 무관한 내부 문서 모델 + 파서 Protocol.
+Docling 파서에 종속되지 않는 독립적인 내부 문서 데이터 모델 및 파서 프로토콜(Protocol)을 정의한다.
 
-flatten.py/caption.py/context.py/filters.py가 Docling의 DoclingDocument를
-직접 만지지 않고 이 모델(ParsedDoc/TextBlock/TableBlock)만 알게 하려는 목적.
-TextBlock의 필드(label/text/page_no/bbox)는 캡션 예외처리 테스트
-(tests/test_caption_exceptions.py)가 이미 검증에 쓰던 최소 프로토콜
-형태를 그대로 정식 모델로 승격한 것이다.
+flatten.py/caption.py/context.py/filters.py 등 하위 알고리즘 모듈은 이 모듈이
+정의하는 추상화(ParsedDoc/TextBlock/TableBlock)만 바라보고, DoclingDocument
+객체를 직접 다루지 않는다 — 파서를 교체하거나 버전을 올려도 이 모듈의
+from_doc()/변환 함수만 손보면 되도록 격리한다. TextBlock의 최소 필드
+구성(label/text/page_no/bbox)은 test_caption_exceptions.py가 쓰던 프로토콜을
+그대로 정식 모델로 승격시킨 것이다.
 
-핵심 3가지:
-  - 좌표계를 파서 경계에서 TOPLEFT로 정규화(Docling 원본은 BOTTOMLEFT) —
-    이후 알고리즘은 "위쪽 = 작은 y"라는 화면 좌표계 직관을 그대로 쓴다.
-  - cref 문자열("#/texts/3")을 정수 인덱스로 — 파싱/문자열 대조 없이
-    바로 인덱스 비교.
-  - 라벨을 자체 Enum 5종(text/list_item/paragraph/section_header/
-    caption)으로 축소 — 알고리즘이 실제로 비교하는 라벨만 남김.
+파서 경계에서 세 가지를 변환한다:
+1. 좌표계를 BOTTOMLEFT(Docling 원본)에서 TOPLEFT로 정규화 — 이후 모든
+   알고리즘이 "위쪽 = y값이 작다"는 화면 좌표계 직관을 그대로 쓸 수 있게.
+2. 텍스트 참조 문자열("#/texts/3")을 정수 인덱스로 치환 — 매번 문자열을
+   파싱하지 않고 가벼운 인덱스 비교만으로 처리하기 위함.
+3. 파서가 내놓는 다양한 라벨을 우리가 실제로 구분해서 쓰는 5종(text/
+   list_item/paragraph/section_header/caption)으로 축소.
 """
 from __future__ import annotations
 

@@ -1,3 +1,13 @@
+"""
+tokens.py
+
+EvidenceUnit 토큰 카운트 유틸리티 (tiktoken cl100k_base 기준).
+
+DEFAULT_TOKEN_LIMIT은 EU 하나가 넘지 않아야 할 토큰 수이고, 이 한도를
+실제로 소비해 표를 행 단위로 쪼개는 쪽은 split.py다. 인코더는 첫 카운트
+시점까지 지연 로딩한다 — 이유는 _get_encoding() 참고.
+"""
+
 from .unit import EvidenceUnit
 
 _ENCODING = None
@@ -18,15 +28,22 @@ def _get_encoding():
 
 
 def count_tokens(text: str) -> int:
+    """텍스트의 토큰 수."""
     return len(_get_encoding().encode(text))
 
+
 def count_eu_tokens(eu: EvidenceUnit) -> int:
+    """EU 전체 텍스트(eu.text — table_html 포함)의 토큰 수."""
     return count_tokens(eu.text)
 
+
 def exceeds_token_limit(eu: EvidenceUnit, limit: int = DEFAULT_TOKEN_LIMIT) -> bool:
+    """EU가 한도를 넘겼는지 — split.py의 분할 대상 판정과 같은 기준."""
     return count_eu_tokens(eu) > limit
 
+
 def get_token_status(eu: EvidenceUnit, limit: int = DEFAULT_TOKEN_LIMIT) -> dict:
+    """EU 하나의 토큰 사용량 리포트(계측/디버깅용)."""
     token_count = count_eu_tokens(eu)
     return {
         "eu_id": eu.eu_id,
@@ -35,29 +52,3 @@ def get_token_status(eu: EvidenceUnit, limit: int = DEFAULT_TOKEN_LIMIT) -> dict
         "exceeds_limit": token_count > limit,
         "usage": f"{token_count/limit:.1%}",
     }
-
-if __name__ == "__main__":
-    eu_small = EvidenceUnit(
-        eu_id="eu-p1-0",
-        page_no=1,
-        caption_text="Table 1: Runtime characteristics of Docling",
-        table_html="<table><tr><td>CPU</td><td>375s</td></tr></table>",
-        footnote_text="OCR is disabled.",
-    )
-
-    eu_large = EvidenceUnit(
-        eu_id="eu-p1-1",
-        page_no=1,
-        caption_text="Table 2: Very large table",
-        table_html="<table><tr><td>" + "데이터 " * 300 + "</td></tr></table>",
-        context_before=["이 표는 매우 긴 설명을 가지고 있습니다. " * 20],
-    )
-
-    assert not exceeds_token_limit(eu_small)
-    assert exceeds_token_limit(eu_large)
-    print("assert 통과 ✅")
-
-    for eu in [eu_small, eu_large]:
-        status = get_token_status(eu)
-        flag = "🔴 초과" if status["exceeds_limit"] else "🟢 정상"
-        print(f"{flag} | {status['eu_id']} | {status['token_count']} 토큰 / 한도 {status['limit']} | usage: {status['usage']}")

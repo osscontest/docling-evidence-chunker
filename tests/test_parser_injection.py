@@ -1,11 +1,9 @@
 """
 EvidenceChunker(parser=...) 생성자 주입이 실제로 동작한다는 실행 가능한 증거.
 
-README "다른 파서를 붙이려면 PdfParser 프로토콜의 parse() 하나만 구현하면
-된다"는 주장이 이전엔 거짓이었음 — EvidenceChunker가 parser 인자 자체를
-받지 않았고, chunk()/build_corpus() 둘 다 내부에서 직접 DocumentConverter로
-파싱해 raw DoclingDocument를 build_evidence_units()에 넘겼음(DoclingParser는
-정의만 돼 있고 실제로 호출되는 곳이 없었음).
+README가 약속하는 "PdfParser 프로토콜의 parse() 하나만 구현하면 파서를
+갈아끼울 수 있다"는 계약을 실행 가능한 형태로 잠근다 — chunk()가 주입된
+parser만 쓰고, 내부에서 DocumentConverter를 몰래 부르지 않는지 확인한다.
 
 이 테스트는 Docling을 아예 import하지 않는 FakePdfParser를 주입해서
 chunk()가 끝까지 동작함을 증명한다 — sys.meta_path로 docling import를
