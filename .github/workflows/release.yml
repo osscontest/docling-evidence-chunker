@@ -77,6 +77,9 @@ jobs:
       id-token: write   # Trusted Publishing(OIDC) + Sigstore 서명에 필요
       contents: write   # GitHub Release에 SBOM/서명 파일 첨부
     steps:
+      # gh release upload가 저장소 정보(git remote)를 필요로 해서 체크아웃 필요
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: dist
