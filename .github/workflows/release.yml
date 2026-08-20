@@ -71,8 +71,8 @@ jobs:
   sign-and-publish:
     needs: [build, pip-audit, sbom]
     runs-on: ubuntu-latest
-    # PyPI/TestPyPI에서 Trusted Publisher를 이 environment 이름으로 연결해야 함
-    environment: testpypi
+    # pypi.org의 Trusted Publisher 등록에서 이 environment 이름(pypi)으로 연결해야 함
+    environment: pypi
     permissions:
       id-token: write   # Trusted Publishing(OIDC) + Sigstore 서명에 필요
       contents: write   # GitHub Release에 SBOM/서명 파일 첨부
@@ -102,11 +102,9 @@ jobs:
           mkdir -p signatures
           mv dist/*.sigstore.json signatures/
 
-      # 현재 배포 대상은 TestPyPI. pypi.org로 전환할 땐 repository-url 줄만 지우면 된다.
-      - name: TestPyPI에 배포 (Trusted Publishing)
+      - name: PyPI에 배포 (Trusted Publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          repository-url: https://test.pypi.org/legacy/
           packages-dir: dist/
           skip-existing: true
 
