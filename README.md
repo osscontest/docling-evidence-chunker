@@ -6,8 +6,8 @@
 
 Docling으로 파싱한 PDF의 표·캡션·설명 단락을 하나의 검색 단위(Evidence Unit)로 묶어 RAG 정답률을 높이는 파이썬 라이브러리
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../Evidence-Chunker/LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](../Evidence-Chunker/pyproject.toml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 
 </div>
 
@@ -102,7 +102,7 @@ flowchart LR
 
 ```
 
-모듈별 역할과 데이터 흐름은 [Architecture 문서](Architecture.md)에서 더 자세히 볼 수 있다.
+모듈별 역할과 데이터 흐름은 [Architecture 문서](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Architecture)에서 더 자세히 볼 수 있다.
 
 ---
 
@@ -151,7 +151,7 @@ vectorstore = InMemoryVectorStore.from_documents(docs, HuggingFaceEmbeddings(mod
 retriever = EvidenceRetriever(vectorstore, k=5)  # max-pool dedupe 기본 적용
 ```
 
-> `export.langchain.to_langchain()`을 쓰면 편의상 `page_content=eu.text`(HTML 포함)가 기본값으로 들어간다. 검색 정확도를 최대화하려면 위 예제처럼 `eu.retrieval_text`를 직접 쓰는 걸 권장. 자세한 이유는 [API Reference](API-Reference.md#retrieval_text-vs-text) 참고.
+> `export.langchain.to_langchain()`을 쓰면 편의상 `page_content=eu.text`(HTML 포함)가 기본값으로 들어간다. 검색 정확도를 최대화하려면 위 예제처럼 `eu.retrieval_text`를 직접 쓰는 걸 권장. 자세한 이유는 [API Reference](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/API-Reference) 참고.
 
 **표+본문을 합친 전체 코퍼스가 필요한 경우**
 
@@ -159,7 +159,7 @@ retriever = EvidenceRetriever(vectorstore, k=5)  # max-pool dedupe 기본 적용
 chunks = chunker.build_corpus("paper.pdf")  # EU(표) + TextChunk(일반 본문)
 ```
 
-더 많은 예제는 [API Reference](API-Reference.md) 참고.
+더 많은 예제는 [API Reference](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/API-Reference) 참고.
 
 ---
 
@@ -174,7 +174,7 @@ chunks = chunker.build_corpus("paper.pdf")  # EU(표) + TextChunk(일반 본문)
 
 `context_dependent`(표+설명 문단이 결합돼야만 풀리는 질문 유형, 이 프로젝트가 해결하려는 핵심 케이스)는 baseline이 사실상 전혀 풀지 못하지만(EM 0.009) Evidence Chunker는 0.351까지 향상(+34.1pp).
 
-유형별 성능 및 대조군(청크 크기 확대·행분할·semantic chunker) 비교 등은 [Benchmark 문서](Benchmark.md), 파라미터 스윕(bbox/sim_threshold) 등 전체 실험 과정은 [Experiments 문서](Experiments.md) 참고.
+유형별 성능 및 대조군(청크 크기 확대·행분할·semantic chunker) 비교 등은 [Benchmark](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Benchmark), 파라미터 스윕(bbox/sim_threshold) 등 전체 실험 과정은 [Experiments](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Experiments) 참고.
 
 ---
 
@@ -189,7 +189,7 @@ chunks = chunker.build_corpus("paper.pdf")  # EU(표) + TextChunk(일반 본문)
 chunker = EvidenceChunker(bbox_threshold=300.0, sim_threshold=0.0)  # 기본값
 ```
 
-자세한 근거와 스윕 실험 결과는 [Configuration 문서](Configuration.md) 참고.
+자세한 근거와 스윕 실험 결과는 [Configuration](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Configuration) 참고.
 
 ---
 
@@ -200,7 +200,7 @@ chunker = EvidenceChunker(bbox_threshold=300.0, sim_threshold=0.0)  # 기본값
 - 문서 내 구조적으로 유사한 표가 여러 개 있을 때 검색 단계에서 혼동 발생
 - `bbox_threshold` 파라미터를 적응형 임계값으로 확장 검토
 
-전체 목록과 각 항목의 원인 및 실측 근거는 [Limitations & Roadmap 문서](Limitations-and-Roadmap.md) 참고.
+전체 목록과 각 항목의 원인 및 실측 근거는 [Limitations & Roadmap](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Limitations-and-Roadmap) 참고.
 
 ---
 
@@ -212,14 +212,14 @@ Apache License 2.0.
 
 ## Wiki
 
-더 자세한 문서는 [Wiki Home](Home.md)에서 볼 수 있습니다.
+더 자세한 문서는 [Wiki Home](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Home)에서 볼 수 있습니다.
 
 | 문서 | 이런 게 궁금할 때 |
 | --- | --- |
-| [Architecture](Architecture.md) | 파이프라인 동작 순서, 모듈별 책임 |
-| [API Reference](API-Reference.md) | `EvidenceChunker`, `EvidenceUnit`, export 함수 시그니처 |
-| [Configuration](Configuration.md) | 파라미터 기본값 설정 근거 |
-| [Benchmark](Benchmark.md) | baseline 대비 최종 결과 |
-| [Experiments](Experiments.md) | 최종 결과에 이르기까지의 전체 실험 로그 |
-| [QA Generation](QA-Generation.md) | QA 자동생성기 설계 |
-| [Limitations & Roadmap](Limitations-and-Roadmap.md) | 한계 및 추후 확장 예정 사항 |
+| [Architecture](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Architecture) | 파이프라인 동작 순서, 모듈별 책임 |
+| [API Reference](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/API-Reference) | `EvidenceChunker`, `EvidenceUnit`, export 함수 시그니처 |
+| [Configuration](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Configuration) | 파라미터 기본값 설정 근거 |
+| [Benchmark](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Benchmark) | baseline 대비 최종 결과 |
+| [Experiments](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Experiments) | 최종 결과에 이르기까지의 전체 실험 로그 |
+| [QA Generation](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/QA-Generation) | QA 자동생성기 설계 |
+| [Limitations & Roadmap](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Limitations-and-Roadmap) | 한계 및 추후 확장 예정 사항 |
