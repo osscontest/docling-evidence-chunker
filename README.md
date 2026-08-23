@@ -4,7 +4,7 @@
 
 **표가 포함된 PDF에서 RAG가 정답을 놓치지 않도록**
 
-Docling으로 파싱한 PDF의 표·캡션·설명 단락을 하나의 검색 단위(Evidence Unit)로 묶어 RAG 정답률을 높이는 파이썬 라이브러리입니다.
+Docling으로 파싱한 PDF의 표·캡션·설명 단락을 하나의 검색 단위(Evidence Unit)로 묶어 RAG 정답률을 높이는 파이썬 라이브러리
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../Evidence-Chunker/LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](../Evidence-Chunker/pyproject.toml)
