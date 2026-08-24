@@ -33,26 +33,32 @@ RAG 파이프라인에서 표가 포함된 PDF는 정답률이 유독 낮다. �
 
 Docling은 표와 캡션을 정확히 인식하고 연결까지 하지만(`table.captions`), 청킹 단계에서 이 연결이 다시 끊어진다.
 
-```
-[Docling HybridChunker 결과]
-청크1: "Table 3: 지역별 매출"          ← 캡션
-청크2: | 지역 | Q1  | Q2  | ...        ← 표 데이터
-청크3: "(단위: 백만 달러)"             ← 각주
-청크4: "위 표에서 Q2 APAC이..."        ← 설명 단락
+```mermaid
+flowchart LR
+    subgraph HC["Docling HybridChunker"]
+        direction TB
+        C1["청크1<br/>'Table 3: 지역별 매출'<br/> 캡션"]
+        C2["청크2<br/>지역 · Q1 · Q2 ...<br/> 표 데이터"]
+        C3["청크3<br/>'(단위: 백만 달러)'<br/> 각주"]
+        C4["청크4<br/>'위 표에서 Q2 APAC이...'<br/> 설명 단락"]
+    end
+    subgraph EC["Evidence Chunker"]
+        EU["EU (단일 청크)<br/>캡션 + 표 데이터 + 각주 + 설명"]
+    end
+    HC -.같은 표를 4개 청크로 분리.-> EC
+
+    style HC fill:#E5E9F0,stroke:#4C566A,stroke-width:1.5px,color:#2E3440
+    style EC fill:#88C0D0,stroke:#5E81AC,stroke-width:2.5px,color:#2E3440
+    style C1 fill:#ECEFF4,stroke:#D08770,stroke-width:1px,color:#2E3440
+    style C2 fill:#ECEFF4,stroke:#D08770,stroke-width:1px,color:#2E3440
+    style C3 fill:#ECEFF4,stroke:#D08770,stroke-width:1px,color:#2E3440
+    style C4 fill:#ECEFF4,stroke:#D08770,stroke-width:1px,color:#2E3440
+    style EU fill:#ECEFF4,stroke:#A3BE8C,stroke-width:2px,color:#2E3440
 ```
 
-"총 매출이 얼마냐"는 질문이 들어오면 캡션(청크1)만 retrieval되고, 실제 숫자가 있는 표 데이터(청크2)는 검색되지 않는다.
+"위 표에서 서울 Q2는 Q1 대비 몇 % 늘었나"처럼 표 숫자와 설명 단락이 함께 있어야 풀리는 질문이 들어오면, 캡션·표·설명이 서로 다른 청크에 흩어져 있어(위) 하나의 청크만으로는 답을 구성할 수 없다. 실제로 이런 유형(표+문맥 결합이 필요한 질문, 2725문항 중 536문항)에서 Docling HybridChunker 단독 EM은 0.9%에 그친다.
 
-```
-[Evidence Chunker 결과]
-EU (단일 청크):
-  "Table 3: 지역별 매출"              ← 캡션
-  | 지역 | Q1  | Q2  | ...            ← 표 데이터
-  "(단위: 백만 달러)"                 ← 각주
-  "위 표에서 Q2 APAC이..."            ← 설명 단락
-```
-
-같은 질문에 캡션+숫자+설명이 함께 반환돼 RAG 정답률을 올린다.
+Evidence Chunker는 같은 표를 캡션+숫자+각주+설명이 한 청크(EU)로 묶여 반환되도록 만들고, 같은 유형에서 EM이 35.1%까지 오른다(+34.2pp). 자세한 유형별·대조군 수치는 [Benchmark](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Benchmark) 참고.
 
 **즉 Docling의 강력한 기능(파싱, 레이아웃 분석, 캡션-표 연결)은 사용하되, Docling만으로는 해결되지 않는 문제(청킹 단계에서 캡션·표·문맥이 다시 갈라지는 문제)를 해결하는 Docling 위의 얇은 레이어이다.**
 
@@ -60,6 +66,8 @@ EU (단일 청크):
 
 ## 핵심 아이디어
 
+> "Evidence Unit"이라는 용어와 "파싱 요소를 개별 청크가 아닌 의미적으로 완결된 단위로 묶는다"는 상위 아이디어는 [Han (2026), *Evidence Units: Ontology-Grounded Document Organization for Parser-Independent Retrieval*](https://arxiv.org/abs/2604.00500)에서 가져왔다. 논문의 파이프라인 전체를 구현한 것이 아니라, 그 상위 개념을 Docling 한 파서에 한정하고 간단하게 재구성하였다.
+  
 Docling의 `DoclingDocument`를 입력받아, 이미 연결된 `captions` 참조와 `prov[0].bbox`를 활용해 표 하나당 Evidence Unit 하나를 구성한다.
 
 1. **캡션↔표 연결**: `captions` 참조 우선, 실패하면 bbox 거리 → 인접 페이지 → 병합 헤더 순으로 fallback
