@@ -223,7 +223,7 @@ Apache License 2.0.
 
 ## Wiki
 
-더 자세한 문서는 [Wiki Home](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Home)에서 볼 수 있습니다.
+더 자세한 문서는 [Wiki Home](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Home)에서 볼 수 있다.
 
 | 문서 | 이런 게 궁금할 때 |
 | --- | --- |
