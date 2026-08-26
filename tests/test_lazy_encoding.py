@@ -5,7 +5,7 @@ tiktoken.get_encoding()은 로컬 캐시가 없으면 인코더 파일을 네트
 받아온다. 이걸 모듈 import 시점에 실행하면 오프라인 + 캐시 없는 환경에서
 `import evidence_chunker`(패키지 __init__.py가 chunker.py -> split.py ->
 tokens.py를 끌고 옴) 자체가 실패한다. 네트워크가 있는 CI에서는 재현되지
-않는 종류의 문제라, 지연 로딩을 테스트로 잠가둔다.
+않는 종류의 문제라, 지연 로딩을 테스트한다.
 """
 import tiktoken
 
