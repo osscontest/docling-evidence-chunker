@@ -120,8 +120,8 @@ flowchart LR
 ## 설치
 
 ```bash
-git clone https://github.com/osscontest/docling-evidence-chunker
-cd docling-evidence-chunker
+git clone https://github.com/EvidenceChunker/Evidence-Chunker
+cd Evidence-Chunker
 pip install -e ".[langchain]"
 ```
 
