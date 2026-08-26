@@ -31,36 +31,39 @@ Docling으로 파싱한 PDF의 표·캡션·설명 단락을 하나의 검색 �
 
 RAG 파이프라인에서 표가 포함된 PDF는 정답률이 유독 낮다. 원인은 파싱이 아니라 청킹이다.
 
+> **표+설명 문단이 결합돼야만 풀리는 질문 536개 중, Docling HybridChunker 단독으로 정답을 맞춘 건 단 5개(EM 0.9%)였다.**
+
 Docling은 표와 캡션을 정확히 인식하고 연결까지 하지만(`table.captions`), 청킹 단계에서 이 연결이 다시 끊어진다.
 
 ```mermaid
 flowchart LR
     subgraph HC["Docling HybridChunker"]
         direction TB
-        C1["청크1<br/>'Table 3: 지역별 매출'<br/> 캡션"]
-        C2["청크2<br/>지역 · Q1 · Q2 ...<br/> 표 데이터"]
-        C3["청크3<br/>'(단위: 백만 달러)'<br/> 각주"]
-        C4["청크4<br/>'위 표에서 Q2 APAC이...'<br/> 설명 단락"]
+        C1["캡션<br/>'Table 3: 지역별 매출'"]
+        C2["표 데이터<br/>지역 · Q1 · Q2 ..."]
+        C3["각주<br/>'(단위: 백만 달러)'"]
+        C4["설명 단락<br/>'서울은 신규 지점 2곳 개점 영향으로...'"]
     end
-    subgraph EC["Evidence Chunker"]
-        EU["EU (단일 청크)<br/>캡션 + 표 데이터 + 각주 + 설명"]
-    end
-    HC -.같은 표를 4개 청크로 분리.-> EC
+    EU["Evidence Chunker<br/>캡션 + 표 데이터 + 각주 + 설명<br/><b>하나의 검색 단위로 통합</b>"]
 
-    style HC fill:#E5E9F0,stroke:#4C566A,stroke-width:1.5px,color:#2E3440
-    style EC fill:#88C0D0,stroke:#5E81AC,stroke-width:2.5px,color:#2E3440
+    C1 -.-> EU
+    C2 -.-> EU
+    C3 -.-> EU
+    C4 -.-> EU
+
+    style HC fill:transparent,stroke:transparent,stroke-width:1.5px,color:#2E3440
     style C1 fill:#ECEFF4,stroke:#D08770,stroke-width:1px,color:#2E3440
     style C2 fill:#ECEFF4,stroke:#D08770,stroke-width:1px,color:#2E3440
     style C3 fill:#ECEFF4,stroke:#D08770,stroke-width:1px,color:#2E3440
     style C4 fill:#ECEFF4,stroke:#D08770,stroke-width:1px,color:#2E3440
-    style EU fill:#ECEFF4,stroke:#A3BE8C,stroke-width:2px,color:#2E3440
+    style EU fill:#88C0D0,stroke:#5E81AC,stroke-width:2.5px,color:#2E3440
 ```
 
-"위 표에서 서울 Q2는 Q1 대비 몇 % 늘었나"처럼 표 숫자와 설명 단락이 함께 있어야 풀리는 질문이 들어오면, 캡션·표·설명이 서로 다른 청크에 흩어져 있어(위) 하나의 청크만으로는 답을 구성할 수 없다. 실제로 이런 유형(표+문맥 결합이 필요한 질문, 2725문항 중 536문항)에서 Docling HybridChunker 단독 EM은 0.9%에 그친다.
+Docling HybridChunker는, 표 숫자와 설명 단락이 함께 있어야 풀리는 질문이 들어오면, 캡션·표·설명이 서로 다른 청크에 흩어져 있어 하나의 청크만으로는 답을 구성할 수 없다는 구조적 문제가 있다.
 
-Evidence Chunker는 같은 표를 캡션+숫자+각주+설명이 한 청크(EU)로 묶여 반환되도록 만들고, 같은 유형에서 EM이 35.1%까지 오른다(+34.2pp). 자세한 유형별·대조군 수치는 [Benchmark](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Benchmark) 참고.
+이에, **Evidence Chunker는 같은 표의 캡션+숫자+각주+설명을 한 청크(EU)로 묶어 반환한다.** Docling의 강력한 기능(파싱, 레이아웃 분석, 캡션-표 연결)은 사용하되, Docling만으로는 해결되지 않는 문제(청킹 단계에서 캡션·표·문맥이 다시 갈라지는 문제)를 해결한다.
 
-**즉 Docling의 강력한 기능(파싱, 레이아웃 분석, 캡션-표 연결)은 사용하되, Docling만으로는 해결되지 않는 문제(청킹 단계에서 캡션·표·문맥이 다시 갈라지는 문제)를 해결하는 Docling 위의 얇은 레이어이다.**
+Evidence Chunker는 같은 536문항에서 baseline 대비 정답을 188개까지 끌어올린다(EM 35.1%, +34.2pp). 자세한 유형별·대조군 수치는 [Benchmark](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Benchmark) 참고.
 
 ---
 
@@ -208,7 +211,7 @@ chunker = EvidenceChunker(bbox_threshold=300.0, sim_threshold=0.0)  # 기본값
 - 문서 내 구조적으로 유사한 표가 여러 개 있을 때 검색 단계에서 혼동 발생
 - `bbox_threshold` 파라미터를 적응형 임계값으로 확장 검토
 
-전체 목록과 각 항목의 원인 및 실측 근거는 [Limitations & Roadmap](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Limitations-and-Roadmap) 참고.
+전체 목록과 각 항목의 원인 및 실측 근거, 진행 상황은 [GitHub Issues](https://github.com/EvidenceChunker/Evidence-Chunker/issues?q=is%3Aissue+label%3Alimitation)에서 `limitation` 라벨로 공개 추적한다.
 
 ---
 
@@ -230,4 +233,4 @@ Apache License 2.0.
 | [Benchmark](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Benchmark) | baseline 대비 최종 결과 |
 | [Experiments](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Experiments) | 최종 결과에 이르기까지의 전체 실험 로그 |
 | [QA Generation](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/QA-Generation) | QA 자동생성기 설계 |
-| [Limitations & Roadmap](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Limitations-and-Roadmap) | 한계 및 추후 확장 예정 사항 |
+| [Examples](https://github.com/EvidenceChunker/Evidence-Chunker/wiki/Examples) | README보다 더 긴 실전 예제, 커스텀 설정·엣지케이스 처리 |
