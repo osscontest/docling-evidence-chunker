@@ -91,7 +91,7 @@ jobs:
           path: .
 
       - name: Sigstore로 배포 아티팩트 서명
-        uses: sigstore/gh-action-sigstore-python@v3.0.0
+        uses: sigstore/gh-action-sigstore-python@v3.5.0
         with:
           inputs: |
             dist/*.tar.gz
