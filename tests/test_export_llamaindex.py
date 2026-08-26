@@ -1,10 +1,6 @@
 """
 export.llamaindex의 to_llamaindex/to_llamaindex_units/dedupe_by_chunk_id/
 EvidenceRetriever가 실제 llama-index-core 설치 환경에서 동작하는지 검증.
-langchain.py를 그대로 옮긴 코드라 로직은 같지만, 이전엔 실행 검증이 전혀
-없었다(README "한계 및 로드맵" 참고 — 이 파일로 해소).
-
-llama-index-core가 없으면 스킵.
 """
 import pytest
 
