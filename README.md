@@ -211,7 +211,7 @@ chunker = EvidenceChunker(bbox_threshold=300.0, sim_threshold=0.0)  # 기본값
 - 문서 내 구조적으로 유사한 표가 여러 개 있을 때 검색 단계에서 혼동 발생
 - `bbox_threshold` 파라미터를 적응형 임계값으로 확장 검토
 
-전체 목록과 각 항목의 원인 및 실측 근거, 진행 상황은 [GitHub Issues](https://github.com/EvidenceChunker/Evidence-Chunker/issues?q=is%3Aissue+label%3Alimitation)에서 `limitation` 라벨로 공개 추적한다.
+전체 목록과 각 항목의 원인 및 실측 근거, 진행 상황은 GitHub Issues에서 공개 추적한다.
 
 ---
 
