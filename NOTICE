@@ -23,9 +23,6 @@ This product contains components derived from or dependent on third-party softwa
 - beautifulsoup4 (https://code.launchpad.net/beautifulsoup4)
   Licensed under the MIT License
 
-- sentence-transformers (https://github.com/UKPLab/sentence-transformers)
-  Licensed under the Apache License, Version 2.0
-
 - langchain-core (https://github.com/langchain-ai/langchain)
   Licensed under the MIT License
 
