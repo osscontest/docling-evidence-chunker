@@ -10,3 +10,30 @@ you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
     https://www.apache.org/licenses/LICENSE-2.0
+
+-------------------------------------------------------------------------------
+This product contains components derived from or dependent on third-party software:
+
+- docling (https://github.com/docling-project/docling)
+  Licensed under the MIT License
+
+- tiktoken (https://github.com/openai/tiktoken)
+  Licensed under the MIT License
+
+- beautifulsoup4 (https://code.launchpad.net/beautifulsoup4)
+  Licensed under the MIT License
+
+- sentence-transformers (https://github.com/UKPLab/sentence-transformers)
+  Licensed under the Apache License, Version 2.0
+
+- langchain-core (https://github.com/langchain-ai/langchain)
+  Licensed under the MIT License
+
+- llama-index-core (https://github.com/run-llama/llama_index)
+  Licensed under the MIT License
+
+- Pytest (https://github.com/pytest-dev/pytest)
+  Licensed under the MIT License
+
+- Setuptools (https://github.com/pypa/setuptools)
+  Licensed under the MIT License
