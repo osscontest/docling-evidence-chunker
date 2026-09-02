@@ -2,8 +2,8 @@ evidence-chunker
 Copyright 2026 docling-evidence-chunker contributors
 
 This product includes software developed as part of the
-docling-evidence-chunker project
-(https://github.com/osscontest/docling-evidence-chunker).
+Evidence Chunker project
+(https://github.com/EvidenceChunker/Evidence-Chunker).
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -34,3 +34,6 @@ This product contains components derived from or dependent on third-party softwa
 
 - Setuptools (https://github.com/pypa/setuptools)
   Licensed under the MIT License
+
+- sentence-transformers (https://github.com/UKPLab/sentence-transformers)
+  Licensed under the Apache License, Version 2.0

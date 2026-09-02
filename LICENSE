@@ -242,7 +242,7 @@ SOFTWARE.
 
 The following components are licensed under the Apache License, Version 2.0:
 
-- sentence-transformers (https://github.com)
+- sentence-transformers (https://github.com/UKPLab/sentence-transformers)
 
 The full text of the Apache License, Version 2.0 can be found at the top of 
 this file.
