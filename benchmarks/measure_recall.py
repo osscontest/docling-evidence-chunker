@@ -39,7 +39,7 @@ from pathlib import Path
 EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 ENCODE_BATCH = 256
 BBOX_THRESHOLD = 300.0
-SIM_THRESHOLD = 0.40
+SIM_THRESHOLD = 0.00
 CTX_WINDOW_PT = 300.0  # dist_pt 슬라이스 기준 (게이트 아님, BBOX_THRESHOLD와 같은 값)
 
 HEADLINE_TYPES = {"cell_value", "table_about", "context_dependent"}
